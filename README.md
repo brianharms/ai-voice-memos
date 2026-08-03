@@ -89,7 +89,8 @@ that genuinely require a human (macOS permission grants).
 
 ## Configuration
 
-Environment variables (set in the launchd plist or before `vma load`):
+Environment variables (set in the launchd plist or before `vma load`; personal
+values belong in `~/.voice-memo-ai/local.env` — see below):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -100,6 +101,21 @@ Environment variables (set in the launchd plist or before `vma load`):
 | `VMA_ROUTER_MODEL` | `sonnet` | Model for the routing call (it's a tiny classification — keep it small). |
 | `VMA_PROBE_INTERVAL` | `900` | Seconds between Claude health probes. |
 | `VMA_SECRETS` | `~/.secrets/api_keys.sh` | Sourced at daemon start; new exports are injected into skill-run environments. |
+
+### iMessage pushes
+
+The daemon can push completion summaries, failures, and health alerts to your
+phone as a **Messages-to-self** iMessage (sent from your own Apple ID, lands on
+all your devices). Put your Apple ID email or phone number in
+`~/.voice-memo-ai/local.env` — a file git never sees:
+
+```
+VMA_IMESSAGE_TARGET=+15551234567
+```
+
+then `vma restart`. The daemon's first push may trigger a one-time macOS
+Automation prompt (Apple Events → Messages); until it's approved, pushes fail
+with error `-1743` in the log.
 
 ## Status
 

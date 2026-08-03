@@ -119,7 +119,32 @@ Caveat: audio playback goes through an index the daemon publishes
 "recordings are temporarily unavailable", the server process's TCC context is
 blocked — relaunch it from a terminal the user has been using interactively.
 
-## 6. Menu-bar app (optional)
+## 6. iMessage pushes (optional)
+
+The daemon can push completion summaries, failures, and health alerts to the
+user's phone via Messages-to-self.
+
+**HUMAN STEP** — never collect or guess the user's contact details. Ask the
+user to add their own Apple ID email or phone number to
+`~/.voice-memo-ai/local.env` themselves, as a single line:
+
+```
+VMA_IMESSAGE_TARGET=+15551234567
+```
+
+Once they confirm it's saved, run `./daemon/vma restart` to apply it.
+
+`vma load` injects every `KEY=VALUE` line from `$STATE/local.env` into the
+daemon's launchd plist, so personal values stay out of the repo. The variable
+must travel via the plist, not `VMA_SECRETS` — the engine reads it at import
+time, before the secrets file is sourced.
+
+**HUMAN STEP** — the daemon's first push may trigger a macOS Automation prompt
+(Apple Events → Messages) that the user must approve; until then pushes fail
+with `-1743` in `log.txt`. The end-to-end test (step 8) doubles as the
+verification: its completion push should arrive as an iMessage.
+
+## 7. Menu-bar app (optional)
 
 ```bash
 cd "$REPO/menubar" && ./build-app.sh
@@ -129,7 +154,7 @@ If the repo is not at `~/Desktop/Claude Projects/ai-voice-memos`, set
 `VMA_PROJECT_DIR=<repo path>` in the app's environment. The app shells out to
 `daemon/vma` and reads `$STATE/status.json` for its status glyph.
 
-## 7. End-to-end test
+## 8. End-to-end test
 
 1. Ensure `/wordcount` (or another trivial skill) is armed in rules.
 2. Ask the user to record a short voice memo on their iPhone: *"This is a test
