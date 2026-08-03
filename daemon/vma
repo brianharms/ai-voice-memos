@@ -57,6 +57,16 @@ install_plist() {
         -e "s#__HOME__#$HOME_DIR#g" \
         -e "s#__PROJECT__#$PROJECT#g" \
         "$SRC_PLIST" > "$DEST_PLIST"
+    # personal daemon env (VMA_IMESSAGE_TARGET etc) lives OUTSIDE the repo in
+    # $STATE/local.env (KEY=VALUE lines) and is injected into the generated
+    # plist here — the daemon reads some VMA_* vars at import time, before the
+    # secrets file is sourced, so launchd env is the only reliable carrier.
+    if [ -f "$STATE/local.env" ]; then
+        while IFS='=' read -r k v; do
+            case "$k" in ''|\#*) continue ;; esac
+            /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:$k string $v" "$DEST_PLIST"
+        done < "$STATE/local.env"
+    fi
     # external watchdog: script COPIED to non-iCloud state dir (launchd exec of
     # anything under the iCloud project path fails — exit-127 scar), plist beside it.
     cp "$SRC_WD_SCRIPT" "$DEST_WD_SCRIPT"

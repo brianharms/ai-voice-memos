@@ -3,3 +3,5 @@ __pycache__/
 .DS_Store
 .build/
 nohup.out
+# personal rules live untracked; rules.example.txt is the shipped template
+rules.txt
