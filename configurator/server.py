@@ -86,6 +86,8 @@ class Handler(BaseHTTPRequestHandler):
                 q = parse_qs(urlparse(self.path).query)
                 name = (q.get("name") or [""])[0]
                 self._send(200, W.read_skill_doc(name))
+            elif p == "/skill-icons":
+                self._send(200, W.read_skill_icons())
             elif p == "/transcript":
                 # the persisted transcript for a memo id (saved by the daemon
                 # at transcription time; older memos won't have one)
@@ -150,6 +152,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "expected a list of rules"})
                 W.write_all_rules(payload)
                 self._send(200, {"ok": True, "saved": len(payload)})
+            elif p == "/skill-icon":
+                # design (or fetch cached) a tile for a skill — one slim model
+                # call per skill ever; glyph vocabulary comes from the page
+                name = str(payload.get("name", ""))
+                glyphs = payload.get("glyphs")
+                if not isinstance(glyphs, list) or not all(isinstance(g, str) for g in glyphs):
+                    return self._send(400, {"error": "expected glyphs: [names]"})
+                icon = W.generate_skill_icon(name, glyphs[:64])
+                self._send(200 if icon else 502, icon or {"error": "icon generation failed"})
             elif p == "/skill-open":
                 # open the SKILL.md in the user's default editor (local action;
                 # path comes from read_skill_doc's validated lookup, never the client)

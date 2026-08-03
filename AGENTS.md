@@ -119,6 +119,26 @@ Caveat: audio playback goes through an index the daemon publishes
 "recordings are temporarily unavailable", the server process's TCC context is
 blocked — relaunch it from a terminal the user has been using interactively.
 
+## 5b. Completion texts (optional but recommended)
+
+The daemon can iMessage the user (Messages-to-self: their own Apple ID) when
+a memo finishes, with the memo's title, what each skill produced, and any
+links. Set it up now — it self-serves the permission grant:
+
+```bash
+./daemon/vma notify their-apple-id@example.com   # sets target + sends a test text
+```
+
+**HUMAN STEP** — within a few seconds macOS shows an Automation permission
+prompt ("…wants to control Messages"). The user must click **Allow**. The
+test is sent by the daemon itself precisely so this prompt appears NOW,
+bound to the daemon's context — otherwise the first real completion text
+would fail silently. If no prompt and no text arrives: System Settings →
+Privacy & Security → Automation → enable Messages for the daemon's python.
+
+`vma notify test` re-sends the test; `vma notify off` disables texts.
+Requires the user to be signed into Messages on the Mac.
+
 ## 6. Menu-bar app (optional)
 
 ```bash
@@ -145,6 +165,25 @@ If the repo is not at `~/Desktop/Claude Projects/ai-voice-memos`, set
 rm -rf ~/.voice-memo-ai      # state, logs, transcripts, results (irreversible)
 # then remove the FDA entry for vma-reader in System Settings
 ```
+
+## iOS device deploy (optional, per-project opt-in)
+
+Skill runs can build, test, and push an iOS app to a physical iPhone — but
+only for projects that opt in with a `.vma-device-deploy.json` in the project
+root (deviceId, scheme, project, unitTestTarget, uiTestTarget, bundleId).
+No config file → no device push, ever. The runner
+(`~/.voice-memo-ai/engine/device_deploy.py`, installed by `vma load`) gates
+the install on the unit AND UI suites passing in the same run, waits out
+device unreachability, retries transient install errors, and keeps a
+last-good rollback copy under `~/.voice-memo-ai/device-builds/`.
+
+Two facts any agent building iOS inside the sandbox needs:
+- every `xcodebuild` requires `OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend
+  -disable-sandbox'` (Swift's macro plugin server cannot nest its own sandbox
+  in here), and
+- derived data must live under `/tmp`, never in the project tree.
+
+TestFlight, App Store, and anything requiring Apple ID auth stay human-only.
 
 ## Operational notes for the resident agent
 

@@ -93,7 +93,7 @@ Environment variables (set in the launchd plist or before `vma load`):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VMA_IMESSAGE_TARGET` | *(empty)* | Your own Apple ID email/phone for completion pushes via Messages. Empty disables. |
+| `VMA_IMESSAGE_TARGET` | *(empty)* | Override for where completion texts go. Prefer `vma notify <apple-id>` — it persists the target and sends a test text that surfaces the one-time Messages permission prompt. |
 | `VMA_WATCH_DIR` | Voice Memos container | Watch a different folder of audio files. |
 | `VMA_TRUSTED_SKILLS` | `/workOrder,/directtoclaude` | Skills that run under the *trusted* sandbox profile (project folders writable). |
 | `VMA_DEPLOY_DIR` | `~/Desktop/Claude Projects/deployments` | Git-versioned folder deploy skills may rewrite under the strict profile. |

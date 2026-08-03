@@ -35,6 +35,9 @@ install_plist() {
     # permission to read its own code (the iCloud-Desktop project path needs a
     # Desktop grant, which churns; observed live).
     cp "$WATCHER" "$STATE/engine/watcher.py"
+    # companion tools skills invoke from inside the sandbox (engine dir is
+    # write-denied to skills, so these can't be tampered with mid-run)
+    [ -f "$PROJECT/engine/device_deploy.py" ] && cp "$PROJECT/engine/device_deploy.py" "$STATE/engine/device_deploy.py"
     # rules live in STATE for the same reason; seed from the repo copy once.
     if [ ! -f "$STATE/rules.txt" ]; then
         if [ -f "$PROJECT/rules.txt" ]; then
@@ -217,7 +220,37 @@ EOF
         echo "opening http://localhost:$PORT"
         open "http://localhost:$PORT"
         ;;
+    notify)
+        # vma notify you@icloud.com   set where completion texts go + send a test
+        # vma notify test             re-send the test to the current target
+        # vma notify off              disable texts
+        TARGET="${2:-}"
+        case "$TARGET" in
+            "")
+                CUR="$(cat "$STATE/imessage-target.txt" 2>/dev/null || echo "(not set — using built-in default, if any)")"
+                echo "completion texts go to: $CUR"
+                echo "usage: vma notify <apple-id-email-or-phone> | test | off"
+                ;;
+            off)
+                printf '' > "$STATE/imessage-target.txt"
+                echo "completion texts disabled."
+                ;;
+            test)
+                touch "$STATE/send-test-push"
+                echo "test text requested — the daemon sends it within a few seconds."
+                echo "FIRST TIME: macOS will ask to allow the daemon to control Messages — click Allow."
+                echo "No prompt and no text? Check System Settings → Privacy & Security → Automation."
+                ;;
+            *)
+                printf '%s' "$TARGET" > "$STATE/imessage-target.txt"
+                touch "$STATE/send-test-push"
+                echo "completion texts → $TARGET (a test text is on its way)."
+                echo "FIRST TIME: macOS will ask to allow the daemon to control Messages — click Allow."
+                echo "No prompt and no text? Check System Settings → Privacy & Security → Automation."
+                ;;
+        esac
+        ;;
     *)
-        echo "usage: vma {load|unload|restart|status|log|config|doctor|reader-rebuild}"; exit 1
+        echo "usage: vma {load|unload|restart|status|log|config|notify|doctor|reader-rebuild}"; exit 1
         ;;
 esac

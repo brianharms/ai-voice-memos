@@ -129,6 +129,11 @@
     .sidebar,.side-open{display:none !important}
   }
 
+  /* Glass (chrome-less WKWebView): the html.in-glass class is set for any
+     Glass-specific tweaks. The old 25px top offset was removed once Glass's
+     drag handle learned to pass clicks through to buttons under the header —
+     restore `html.in-glass .sidebar{padding-top:39px}` etc. if ever needed. */
+
   /* ---------- header ---------- */
   .app-head{display:flex;align-items:center;gap:16px}
   .app-icon{
@@ -269,18 +274,21 @@
   .cond-input::placeholder{color:var(--tertiary)}
 
   /* switch */
+  /* native NSSwitch measures 54×24pt here (verified against drawn pixels, not
+     just intrinsic size) — but full size reads huge in this dense list, so we
+     render at ~83% keeping the true native 2.25:1 proportions: 45×20. */
   .switch{
-    flex:none;width:40px;height:24px;border-radius:12px;border:0;padding:0;margin-top:5px;
+    flex:none;width:38px;height:20px;border-radius:10px;border:0;padding:0;margin-top:7px;
     background:var(--track-off);position:relative;
     transition:background .25s;
   }
   .switch::after{
-    content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+    content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
     background:var(--knob);box-shadow:0 1px 3px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.04);
     transition:transform .28s cubic-bezier(.34,1.4,.5,1);
   }
   .switch[aria-checked="true"]{background:var(--green)}
-  .switch[aria-checked="true"]::after{transform:translateX(16px)}
+  .switch[aria-checked="true"]::after{transform:translateX(18px)}
   .switch:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
   .remove-btn{
@@ -368,6 +376,7 @@
   .ran-note{font-size:12.5px;color:var(--tertiary)}
   .ran-note b{font-weight:590;color:var(--secondary)}
   .more-btn{background:none;border:0;padding:0;font-size:12.5px;color:var(--blue)}
+  .show-less{display:block;margin-top:7px}
   .detail-block{
     margin-top:8px;white-space:pre-wrap;font-size:13px;line-height:1.55;color:var(--secondary);
     background:var(--inset);border-radius:10px;padding:10px 12px;
@@ -551,6 +560,13 @@ const esc = (s) => (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<
 const themeQ = new URLSearchParams(location.search).get('theme');
 if (themeQ) document.documentElement.dataset.theme = themeQ;
 
+// Glass (chrome-less WKWebView viewer): no Chrome token in the UA. Shift the
+// UI down so the traffic lights don't overlay it. ?glass=1|0 forces for testing.
+const glassQ = new URLSearchParams(location.search).get('glass');
+const inGlass = glassQ != null ? glassQ === '1'
+  : (/AppleWebKit/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent));
+if (inGlass) document.documentElement.classList.add('in-glass');
+
 let RULES = [];          // {skill, condition, enabled}
 let SKILLS = [];         // available skill names
 let addOpen = false;
@@ -586,6 +602,22 @@ const G = {
   shield:'<path d="M12 3l7 2.8V11c0 4.4-3 7.5-7 9-4-1.5-7-4.6-7-9V5.8L12 3z" stroke-linejoin="round"/><path d="M9.2 11.5l2 2 3.6-3.8"/>',
   mic:'<rect x="9.2" y="3" width="5.6" height="11" rx="2.8"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21"/>',
   screen:'<rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M12 16.5v3M8.5 20.5h7"/>',
+  gear:'<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M21.2 12h-3M5.8 12h-3M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1M18.5 18.5l-2.1-2.1M7.6 7.6L5.5 5.5"/>',
+  chat:'<path d="M4 5.5h16v11H9l-4.5 4v-4H4v-11z" stroke-linejoin="round"/>',
+  timer:'<circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.8 2M9.5 2.8h5"/>',
+  map:'<path d="M3.5 6l5.5-2 6 2 5.5-2v14l-5.5 2-6-2-5.5 2V6z" stroke-linejoin="round"/><path d="M9 4v14M15 6v14"/>',
+  chart:'<path d="M4 20V4M4 20h16M8 16v-5M12.5 16V8M17 16v-8.5"/>',
+  pencil:'<path d="M4 20l1.2-4.2L16.4 4.6a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L8.2 18.8 4 20z" stroke-linejoin="round"/>',
+  globe:'<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.3 4 5.2 4 8.5s-1.4 6.2-4 8.5c-2.6-2.3-4-5.2-4-8.5s1.4-6.2 4-8.5z"/>',
+  heart:'<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.3 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" stroke-linejoin="round"/>',
+  eye:'<path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8"/>',
+  folder:'<path d="M3.5 6.5a2 2 0 0 1 2-2H10l2 2.5h6.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11.5z" stroke-linejoin="round"/>',
+  camera:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8.5 7l1.5-2.5h4L15.5 7"/><circle cx="12" cy="13.5" r="3.5"/>',
+  music:'<path d="M9 18.5V6l10-2v12.5"/><circle cx="6.8" cy="18.5" r="2.2"/><circle cx="16.8" cy="16.5" r="2.2"/>',
+  cloud:'<path d="M7 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.6 1.6 3.8 3.8 0 0 1-.6 7.4H7z" stroke-linejoin="round"/>',
+  lock:'<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  play:'<path d="M8 5.5v13c0 .8.9 1.3 1.6.9l10-6.5a1 1 0 0 0 0-1.8l-10-6.5A1.05 1.05 0 0 0 8 5.5z" stroke-linejoin="round"/>',
+  flag:'<path d="M5.5 21V3.5M5.5 4.5h12l-2.5 3.5 2.5 3.5h-12"/>',
 };
 const TILE = {
   '/ideaDaemon':      {c:['#ffcc33','#ff9500'], g:G.bulb},
@@ -601,14 +633,36 @@ const TILE = {
   '/talk':            {c:['#66d575','#2fb84f'], g:G.mic},
 };
 const FALLBACKS = [['#5ac8fa','#0a84ff'],['#b18cff','#7d4dff'],['#4dd4ac','#00a98f'],['#ff8c5a','#ff5e3a'],['#ff7ab8','#ff2d78'],['#66d575','#2fb84f']];
+let ICONS = {};                 // generated tiles from the server: {glyph, colors:[a,b]}
+const ICON_REQUESTED = new Set();
 function tileFor(skill, attrs=''){
   let t = TILE[skill];
+  if (!t && ICONS[skill] && G[ICONS[skill].glyph]){
+    t = {c: ICONS[skill].colors, g: G[ICONS[skill].glyph]};
+  }
   if (!t){
     let h=0; for (const ch of skill) h=(h*31+ch.charCodeAt(0))>>>0;
     t = {c:FALLBACKS[h%FALLBACKS.length], g:G.spark};
   }
   return `<span class="tile" ${attrs} style="background:linear-gradient(180deg,${t.c[0]},${t.c[1]})" aria-hidden="true">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round">${t.g}</svg></span>`;
+}
+// any armed skill without a hand-designed or generated tile gets one designed
+// by a one-time slim model call on the server (cached forever after).
+async function requestMissingIcons(){
+  for (const r of RULES){
+    const s = r.skill;
+    if (TILE[s] || ICONS[s] || ICON_REQUESTED.has(s)) continue;
+    ICON_REQUESTED.add(s);
+    try {
+      const icon = await api('/skill-icon', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-VMA-Token':TOKEN},
+        body: JSON.stringify({name: s, glyphs: Object.keys(G)}),
+      });
+      if (icon && icon.glyph){ ICONS[s] = icon; renderRules(); }
+    } catch(e){ /* fallback tile stays; retried next page load */ }
+  }
 }
 
 // ---------- API ----------
@@ -821,6 +875,7 @@ function renderAdd(){
     a.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
       RULES.push({skill:b.dataset.add, condition:'', enabled:true});
       addOpen=false; renderRules(); saveRules().catch(console.error);
+      requestMissingIcons();
       const ta = $('rules').querySelector(`[data-cond="${RULES.length-1}"]`); if(ta) ta.focus();
     });
   }
@@ -1043,7 +1098,17 @@ function wireActivity(){
     slot.querySelector('audio').onerror = ()=>{ slot.innerHTML = `<div class="audio-missing">Playback failed.</div>`; };
   });
   box.querySelectorAll('.res-more').forEach(el=>el.onclick=()=>{
-    el.outerHTML = `<div class="detail-block">${esc(el.dataset.detail)}</div>`;
+    const chips = el.closest('.act-chips') || el.parentElement;
+    const block = document.createElement('div');
+    block.className = 'detail-block';
+    block.textContent = el.dataset.detail;
+    const less = document.createElement('button');
+    less.type = 'button'; less.className = 'more-btn show-less';
+    less.textContent = 'Show Less';
+    less.onclick = ()=>{ block.remove(); less.remove(); el.style.display=''; };
+    chips.insertAdjacentElement('afterend', block);
+    block.insertAdjacentElement('afterend', less);
+    el.style.display = 'none';
   });
   box.querySelectorAll('.res-file').forEach(el=>el.onclick=()=>{
     navigator.clipboard && navigator.clipboard.writeText(el.dataset.path);
@@ -1149,7 +1214,9 @@ async function boot(){
   wireLayout(); applyLayout();
   try { SKILLS = await api('/skills'); } catch(e){ SKILLS=[]; }
   try { RULES = await api('/rules'); } catch(e){ RULES=[]; }
+  try { ICONS = await api('/skill-icons'); } catch(e){ ICONS={}; }
   renderRules();
+  requestMissingIcons();
   await refreshStatus();
   await refreshActivity();
   setInterval(refreshStatus, 2000);

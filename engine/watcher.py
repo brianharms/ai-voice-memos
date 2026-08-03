@@ -69,6 +69,7 @@ LIVE_FILE = STATE_DIR / "live.json"          # rolling live-console feed for the
 RESULTS_DIR = STATE_DIR / "results"          # per-memo skill result envelopes
 TRANSCRIPTS_DIR = STATE_DIR / "transcripts"  # per-memo transcript text (persisted at transcription)
 RECORDINGS_INDEX = STATE_DIR / "recordings-index.json"  # id -> filename, written by the daemon's poll
+SKILL_ICONS_FILE = STATE_DIR / "skill-icons.json"       # generated tile designs, cached forever
 WORK_DIR = STATE_DIR / "work"
 BACKUPS_DIR = STATE_DIR / "backups"          # pre-run git bundles; create-only under both sandbox profiles
 
@@ -83,9 +84,23 @@ RULES_FILE = STATE_DIR / "rules.txt"
 # never dies (unlike python's, which churns with every brew/Xcode update).
 READER = Path(os.environ.get("VMA_READER") or STATE_DIR / "bin/vma-reader")
 
-# Messages-to-self push: completion pings reach the phone as an iMessage from
-# your own Apple ID (Messages-to-self). Empty string disables the push.
-IMESSAGE_TARGET = os.environ.get("VMA_IMESSAGE_TARGET", "")
+# Messages-to-self push: completion pings reach the phone as an iMessage to
+# your own Apple ID. Resolution order: VMA_IMESSAGE_TARGET env (explicit
+# override) → imessage-target.txt in the state dir (written by `vma notify`,
+# survives reinstalls, needs no env plumbing) → default. Empty disables.
+IMESSAGE_TARGET_FILE = STATE_DIR / "imessage-target.txt"
+IMESSAGE_TEST_FLAG = STATE_DIR / "send-test-push"
+
+def imessage_target() -> str:
+    env = os.environ.get("VMA_IMESSAGE_TARGET")
+    if env is not None:
+        return env.strip()
+    try:
+        if IMESSAGE_TARGET_FILE.exists():
+            return IMESSAGE_TARGET_FILE.read_text().strip()
+    except Exception:
+        pass
+    return ""   # no default — set yours with: vma notify <apple-id>
 
 # API keys for children (wrangler deploys, fal.ai renders). launchd never runs
 # .zshrc, so the daemon's environment lacks everything this file exports —
@@ -483,11 +498,12 @@ def send_imessage(body: str) -> None:
     """Push to phone+laptop via Messages-to-self. Best-effort: logged on failure,
     never fails the run. Under launchd the first send may need a one-time
     Automation (Apple Events -> Messages) grant; until then this logs -1743."""
-    if not IMESSAGE_TARGET:
+    target = imessage_target()
+    if not target:
         return
     script = (
         f"tell application \"Messages\" to send {_applescript_str(body)} "
-        f"to participant {_applescript_str(IMESSAGE_TARGET)} "
+        f"to participant {_applescript_str(target)} "
         f"of (1st account whose service type = iMessage)"
     )
     # Messages can be slow or briefly unreachable (notably on wake-from-sleep,
@@ -655,15 +671,15 @@ def rate_limit_hit(where: str) -> None:
         _RATE_LIMIT["notified"] = True
         log(f"!! Anthropic quota/rate limit hit ({where}) — pausing memo processing; "
             f"retrying every {int(RATE_HOLDOFF / 60)} min. Memos are held, NOT consumed.")
-        notify("Voice Memo AI — rate limited",
+        notify("AI Voice Memos — rate limited",
                "Claude quota hit; memos held and will process when it clears.")
-        send_imessage("⏸ Voice Memo AI — Claude quota/rate limit hit. Memos are held "
-                      "(not consumed) and will process automatically when the limit clears.")
+        send_imessage("⏸ AI Voice Memos paused — Claude usage limit reached.\n"
+                      "New memos are safe and will process automatically when the limit clears.")
 
 def rate_limit_clear(where: str) -> None:
     if _RATE_LIMIT["notified"]:
         log(f"rate limit cleared ({where}) — resuming normal processing.")
-        send_imessage("▶️ Voice Memo AI — Claude quota restored; resuming memo processing.")
+        send_imessage("▶️ AI Voice Memos resumed — the usage limit cleared and held memos are processing now.")
     _RATE_LIMIT["until"] = 0.0
     _RATE_LIMIT["notified"] = False
 
@@ -888,9 +904,9 @@ def _folder_denied(err: str) -> None:
         log(f"!! FOLDER ACCESS DENIED: cannot read the Voice Memos folder ({err}). "
             "macOS is blocking access (grant Full Disk Access to "
             f"{READER}). New memos CANNOT be detected until fixed.")
-        notify("Voice Memo AI — NO FOLDER ACCESS",
+        notify("AI Voice Memos — NO FOLDER ACCESS",
                "macOS is blocking Voice Memos access. Open the configurator for the fix.")
-        send_imessage("⛔ Voice Memo AI — NO FOLDER ACCESS\nmacOS is blocking Voice Memos access; "
+        send_imessage("⛔ AI Voice Memos can't see your recordings\nmacOS is blocking Voice Memos access; "
                       "new memos cannot be detected until fixed. Open the configurator on the Mac.")
     _FOLDER_OK[0] = False
 
@@ -1019,6 +1035,61 @@ def save_transcript(sid: str, transcript: str) -> None:
         os.replace(tmp, TRANSCRIPTS_DIR / (sid + ".txt"))
     except Exception as e:
         log(f"    !! could not save transcript for {sid}: {e}")
+
+def read_skill_icons() -> dict:
+    try:
+        return json.loads(SKILL_ICONS_FILE.read_text())
+    except Exception:
+        return {}
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+def generate_skill_icon(name: str, glyphs: list) -> dict:
+    """Design a tile (glyph + gradient) for a skill via a one-time slim model
+    call; cached forever in SKILL_ICONS_FILE. Same token-diet pattern as the
+    router: SLIM_FLAGS + small model, a few hundred tokens once per skill ever."""
+    icons = read_skill_icons()
+    if name in icons:
+        return icons[name]
+    if not name.startswith("/") or not glyphs:
+        return {}
+    doc = read_skill_doc(name.lstrip("/"))
+    desc = (doc.get("content") or "")[:400]
+    system = (
+        "You design app-icon tiles in the style of Apple Shortcuts action icons. "
+        "Given a skill's name and description plus a list of available glyph names, "
+        "pick the glyph that best captures what the skill DOES, and a two-color "
+        "vertical gradient (light top, deeper bottom, same hue family — vivid, "
+        "Shortcuts-like, works behind a white glyph). Return ONLY JSON: "
+        '{"glyph": "<one of the provided names>", "colors": ["#rrggbb", "#rrggbb"]}'
+    )
+    prompt = f"SKILL: {name}\nDESCRIPTION:\n{desc}\n\nGLYPH OPTIONS: {', '.join(glyphs)}"
+    proc = run_cmd(
+        [str(CLAUDE), "-p", "--model", ROUTER_MODEL, "--system-prompt", system] + SLIM_FLAGS,
+        input_text=prompt, timeout=60,
+    )
+    m = re.search(r"\{.*\}", proc.stdout or "", re.DOTALL)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return {}
+    glyph = data.get("glyph")
+    colors = data.get("colors")
+    if glyph not in glyphs or not (isinstance(colors, list) and len(colors) == 2
+                                   and all(isinstance(c, str) and _HEX_RE.match(c) for c in colors)):
+        return {}
+    icon = {"glyph": glyph, "colors": colors}
+    icons[name] = icon
+    try:
+        tmp = SKILL_ICONS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(icons))
+        os.replace(tmp, SKILL_ICONS_FILE)
+    except Exception:
+        pass
+    log(f"skill icon designed for {name}: {glyph} {colors}")
+    return icon
 
 def read_transcript(sid: str) -> dict:
     """Transcript text for a memo id, for the configurator. sid is validated
@@ -1440,7 +1511,17 @@ def run_skill(skill: str, transcript: str, m4a: Path, allowed_skills: set) -> No
         '  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless '
         f"--no-sandbox --user-data-dir={WORK_DIR}/chrome-profile --no-first-run "
         "--screenshot=<png path> (or --dump-dom) <url>\n"
-        "Never launch Chrome any other way here."
+        "Never launch Chrome any other way here.\n\n"
+        "XCODE / iOS NOTE: xcodebuild WORKS in this sandbox only if every invocation "
+        "adds OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' (the Swift "
+        "macro plugin server cannot nest its own sandbox in here) AND uses a "
+        "-derivedDataPath under /tmp (project trees are iCloud-synced; building into "
+        "them hangs). If the project dir contains .vma-device-deploy.json, you may "
+        "verify and push to the configured device with:\n"
+        f"  /usr/bin/python3 {STATE_DIR}/engine/device_deploy.py <project-dir>\n"
+        "It runs the unit + UI suites and installs on the device ONLY if both pass "
+        "(add --tests-only to just verify). Never push to a device any other way, and "
+        "never touch TestFlight/App Store."
     )
     # GUARDRAIL layer 2: run under sandbox-exec so the OS refuses deletion of
     # project folders / key dirs even if the model misbehaves or injection slips past.
@@ -1500,8 +1581,10 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
     if n >= MAX_ATTEMPTS:
         log(f"NEW memo: {m4a.name} (id {sid})")
         log(f"    !! giving up after {n} failed attempts — marked seen, held for manual review.")
-        notify("Voice Memo AI — failed", f"Gave up on {m4a.name} after {n} attempts")
-        send_imessage(f"❌ Voice Memo AI — failed\nGave up on {m4a.name} after {n} attempts; held for manual review.")
+        notify("AI Voice Memos — failed", f"Gave up on {m4a.name} after {n} attempts")
+        send_imessage(f"❌ AI Voice Memos couldn't process a memo\n"
+                      f"\"{m4a.name}\" failed {n} times in a row, so it won't be retried. "
+                      f"The log has details: ~/.voice-memo-ai/log.txt")
         mark_seen(sid)
         return
     attempts[sid] = n + 1
@@ -1536,8 +1619,10 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
     hit = scan_transcript(transcript)
     if hit:
         log(f"    !! TRIPWIRE: transcript matched destructive/injection pattern {hit!r} — NOT run, held.")
-        notify("Voice Memo AI — BLOCKED", f"Flagged content, held for review: {snippet}")
-        send_imessage(f"🚫 Voice Memo AI — blocked\nFlagged content, held for review: {snippet}")
+        notify("AI Voice Memos — held", f"Flagged content, held for review: {snippet}")
+        send_imessage(f"🚫 AI Voice Memos held a memo\n"
+                      f"It contained something that looked like a destructive command, so "
+                      f"nothing was run. Memo starts: \"{snippet[:80]}\"")
         mark_seen(sid)
         return
 
@@ -1574,9 +1659,14 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
         log(f"    memo summary: {' '.join(decision['summary'].split())}")
     live_event("route", f"{', '.join(chosen) if chosen else 'no skill fit'} — {decision.get('reason','')}")
 
+    memo_title = (decision.get("title") or "").strip() or snippet[:60]
+    memo_summary = (decision.get("summary") or "").strip()
+
     if not chosen:
-        notify("Voice Memo AI — unrouted", snippet)
-        send_imessage(f"❓ Voice Memo AI — unrouted\nNothing fit; held: {snippet}")
+        notify("AI Voice Memos — no match", snippet)
+        send_imessage(f"❓ No automation matched: {memo_title}\n"
+                      + (f"{memo_summary}\n" if memo_summary else "")
+                      + "Nothing was run — the memo is in Activity if you want to route it yourself.")
         log("    -> unrouted (held; nothing fit).")
         mark_seen(sid)
         return
@@ -1603,18 +1693,29 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
         live_stage(f"running {skill}")
         run_skill(skill, transcript, m4a, allowed_skills)
     live_event("done", f"finished {', '.join(chosen)}")
-    notify("Voice Memo AI — done", f"{', '.join(chosen)}: {snippet}")
+    notify("AI Voice Memos — done", f"{', '.join(chosen)}: {snippet}")
     urls = result_urls(sid)
     partials = result_partials(sid)
+    # push composition: lead with WHAT THE MEMO WAS (the router's title), then
+    # what each skill actually produced (envelope titles beat skill names for a
+    # lock screen), then tappable links. Skill names stay as a quiet last line.
+    env_titles = [str(e.get("title") or "").strip()
+                  for e in _envelopes(sid) if str(e.get("title") or "").strip()]
     if partials and not urls:
-        push = (f"⚠️ Voice Memo AI — finished but looks INCOMPLETE\n"
-                f"{', '.join(chosen)}: {snippet}\n" + "\n".join(partials))
+        push = (f"⚠️ Finished but incomplete: {memo_title}\n"
+                + "\n".join(partials)
+                + f"\n({', '.join(chosen)} — check Activity for details)")
     else:
-        push = f"✅ Voice Memo AI — done\n{', '.join(chosen)}: {snippet}"
-        if urls:
-            push += "\n" + "\n".join(urls)
+        lines = [f"✅ Done: {memo_title}"]
+        if env_titles:
+            lines += [f"• {t}" for t in env_titles[:3]]
+        elif memo_summary:
+            lines.append(memo_summary)
+        lines += urls
         if partials:
-            push += "\n⚠️ partial: " + " | ".join(partials)
+            lines.append("⚠️ partial: " + " | ".join(partials))
+        lines.append(f"({', '.join(chosen)})")
+        push = "\n".join(lines)
     send_imessage(push)
 
 def worker_loop(dry_run: bool) -> None:
@@ -1720,6 +1821,20 @@ def detection_loop(dry_run: bool, last_progress: list) -> None:
                 _QUEUE.put((sid, path))
         except Exception as e:
             log(f"!! detection error: {e}")
+        # `vma notify` requests a test push via flag file. Sending it from THIS
+        # process matters: the one-time Automation (Apple Events → Messages)
+        # permission binds to the daemon's context, so the grant prompt appears
+        # during setup — not silently swallowing the first real completion text.
+        if IMESSAGE_TEST_FLAG.exists():
+            try:
+                IMESSAGE_TEST_FLAG.unlink()
+            except Exception:
+                pass
+            tgt = imessage_target()
+            log(f"test push requested → {tgt or '(disabled — no target set)'}")
+            if tgt:
+                send_imessage("👋 AI Voice Memos — texts are set up. You'll get a "
+                              "message here whenever a memo finishes processing.")
         # heartbeat EVERY pass, even during long skill runs (worker is separate),
         # so the UI and the external watchdog always see a live daemon.
         write_status()
