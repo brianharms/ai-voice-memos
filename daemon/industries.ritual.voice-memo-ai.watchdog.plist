@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>industries.ritual.voice-memo-ai.watchdog</string>
+
+    <!-- iCloud-path scar: the script is COPIED to ~/.voice-memo-ai (non-iCloud)
+         by `vma load`; launchd must never exec anything under an iCloud path. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HOME__/.voice-memo-ai/watchdog.sh</string>
+    </array>
+
+    <!-- RESIDENT loop (the script never exits; it checks every 60s internally).
+         StartInterval proved unreliable: launchd pends "nondemand" spawns
+         (observed runs=0, "pended nondemand spawn = speculative"). vma load
+         kickstarts this once (a demand spawn, never deferred); KeepAlive is a
+         best-effort backstop if the loop ever crashes. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.voice-memo-ai/watchdog.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.voice-memo-ai/watchdog.err.log</string>
+</dict>
+</plist>

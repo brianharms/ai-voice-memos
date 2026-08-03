@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>industries.ritual.voice-memo-ai</string>
+
+    <!-- iCloud-path scar: exec the interpreter directly on the .py, NOT a /bin/zsh
+         wrapper script (which fails exit 127 under iCloud Desktop paths). Env goes
+         in EnvironmentVariables below, not in a shell. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>__WATCHER__</string>
+    </array>
+
+    <!-- always-on: start at login and relaunch if it dies -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- give subprocesses (ffmpeg, whisper-cli, claude) a real PATH; claude is at
+         ~/.local/bin (the code uses the absolute path, but PATH helps others) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT__</string>
+
+    <!-- throttle relaunch so a crash-loop doesn't hammer the CPU -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.voice-memo-ai/daemon.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.voice-memo-ai/daemon.err.log</string>
+</dict>
+</plist>

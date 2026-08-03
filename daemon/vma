@@ -1,0 +1,223 @@
+#!/bin/bash
+# vma — control the Voice Memo AI always-on watcher (launchd).
+#   vma load     install + start the daemon + external watchdog (auto-start on login)
+#   vma unload   stop + remove both (disable)
+#   vma restart  unload then load
+#   vma status   is it running? show heartbeat
+#   vma log      tail the activity log
+set -euo pipefail
+
+LABEL="industries.ritual.voice-memo-ai"
+WD_LABEL="industries.ritual.voice-memo-ai.watchdog"
+HOME_DIR="$HOME"
+# the repo root = wherever this script lives (daemon/vma → repo)
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Apple's system python, NOT homebrew's: the Full Disk Access grant that lets the
+# daemon read the Voice Memos folder is tied to the binary's code identity.
+# Homebrew python is ad-hoc signed — every brew upgrade changes its identity and
+# silently kills the grant (the original went-deaf-forever failure). Apple's
+# python3 is Apple-signed with a STABLE identity: grant once, survives updates.
+PYTHON="/usr/bin/python3"
+WATCHER="$PROJECT/engine/watcher.py"
+SRC_PLIST="$PROJECT/daemon/$LABEL.plist"
+SRC_WD_PLIST="$PROJECT/daemon/$WD_LABEL.plist"
+SRC_WD_SCRIPT="$PROJECT/daemon/watchdog.sh"
+# install to a stable, NON-iCloud location so launchd never reads from a dataless file
+DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DEST_WD_PLIST="$HOME/Library/LaunchAgents/$WD_LABEL.plist"
+STATE="$HOME/.voice-memo-ai"
+DEST_WD_SCRIPT="$STATE/watchdog.sh"
+
+install_plist() {
+    mkdir -p "$HOME/Library/LaunchAgents" "$STATE" "$STATE/bin" "$STATE/engine"
+    # ZERO-GRANT daemon: the engine runs from a COPY in ~/.voice-memo-ai — a
+    # non-iCloud, non-TCC-protected path — so launchd python needs NO macOS
+    # permission to read its own code (the iCloud-Desktop project path needs a
+    # Desktop grant, which churns; observed live).
+    cp "$WATCHER" "$STATE/engine/watcher.py"
+    # rules live in STATE for the same reason; seed from the repo copy once.
+    if [ ! -f "$STATE/rules.txt" ]; then
+        if [ -f "$PROJECT/rules.txt" ]; then
+            cp "$PROJECT/rules.txt" "$STATE/rules.txt"
+        elif [ -f "$PROJECT/rules.example.txt" ]; then
+            cp "$PROJECT/rules.example.txt" "$STATE/rules.txt"
+        fi
+    fi
+    # vma-reader: the ONLY code that touches the Voice Memos container. Built
+    # ONCE and never rebuilt automatically — its code identity must stay fixed
+    # so its one-time Full Disk Access grant holds forever. To deliberately
+    # update it: vma reader-rebuild (then re-grant FDA).
+    if [ ! -x "$STATE/bin/vma-reader" ]; then
+        clang -O2 -Wall -o "$STATE/bin/vma-reader" "$PROJECT/helper/vma-reader.c"
+        codesign --force --sign - "$STATE/bin/vma-reader"
+        echo "built $STATE/bin/vma-reader — grant it Full Disk Access (vma doctor to verify)"
+    fi
+    sed -e "s#__PYTHON__#$PYTHON#g" \
+        -e "s#__WATCHER__#$STATE/engine/watcher.py#g" \
+        -e "s#__HOME__#$HOME_DIR#g" \
+        -e "s#__PROJECT__#$PROJECT#g" \
+        "$SRC_PLIST" > "$DEST_PLIST"
+    # external watchdog: script COPIED to non-iCloud state dir (launchd exec of
+    # anything under the iCloud project path fails — exit-127 scar), plist beside it.
+    cp "$SRC_WD_SCRIPT" "$DEST_WD_SCRIPT"
+    chmod +x "$DEST_WD_SCRIPT"
+    sed -e "s#__HOME__#$HOME_DIR#g" "$SRC_WD_PLIST" > "$DEST_WD_PLIST"
+}
+
+DOMAIN="gui/$(id -u)"
+
+# --- robust helpers: the flakiness was races between bootout/bootstrap and the
+# process actually dying/starting. These wait for the real state to settle. ---
+
+# fully stop: bootout the WATCHDOG FIRST (so it can't resurrect the daemon
+# mid-unload), then the daemon; wait (up to ~8s) for every watcher process to die.
+stop_daemon() {
+    launchctl bootout "$DOMAIN/$WD_LABEL" 2>/dev/null || true
+    pkill -f "$STATE/watchdog.sh" 2>/dev/null || true   # resident loop, if any survived
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+        pgrep -f "$STATE/engine/watcher.py" >/dev/null 2>&1 || return 0
+        sleep 0.2
+    done
+    # still alive after 8s -> force it
+    pkill -9 -f "$STATE/engine/watcher.py" 2>/dev/null || true
+    sleep 0.5
+}
+
+# start: bootstrap daemon + watchdog, then wait (up to ~8s) for a live process.
+start_daemon() {
+    install_plist
+    # fresh heartbeat BEFORE the watchdog loads, so it never kickstarts a daemon
+    # that simply hasn't finished its first poll yet.
+    /usr/bin/touch "$STATE/heartbeat" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$DEST_PLIST" 2>/dev/null || true
+    launchctl kickstart "$DOMAIN/$LABEL" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$DEST_WD_PLIST" 2>/dev/null || true
+    # DEMAND-kickstart the watchdog: launchd pends RunAtLoad ("nondemand") spawns
+    # on modern macOS, so without this the watchdog may never actually start.
+    launchctl kickstart "$DOMAIN/$WD_LABEL" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+        if pgrep -f "$STATE/engine/watcher.py" >/dev/null 2>&1; then return 0; fi
+        sleep 0.2
+    done
+    return 1
+}
+
+case "${1:-status}" in
+    load)
+        stop_daemon
+        if start_daemon; then
+            echo "loaded — watcher is always-on (starts at login, self-heals; external watchdog armed). pid $(pgrep -f "$STATE/engine/watcher.py" | head -1)"
+        else
+            echo "ERROR: daemon did not start. Check $STATE/daemon.err.log"; exit 1
+        fi
+        ;;
+    unload)
+        stop_daemon
+        # remove the installed plists too — launchd re-bootstraps everything in
+        # ~/Library/LaunchAgents at login, so bootout alone would resurrect the
+        # "disabled" daemon at next login. vma load reinstalls them.
+        rm -f "$DEST_PLIST" "$DEST_WD_PLIST"
+        echo "unloaded — watcher + watchdog stopped and disabled (won't return at login)."
+        ;;
+    restart)
+        stop_daemon
+        if start_daemon; then
+            echo "restarted. pid $(pgrep -f "$STATE/engine/watcher.py" | head -1)"
+        else
+            echo "ERROR: daemon did not restart. Check $STATE/daemon.err.log"; exit 1
+        fi
+        ;;
+    status)
+        if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+            # 'loaded' does not mean 'running' — only report RUNNING with a live pid
+            PID=$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -oE 'pid = [0-9]+' | grep -oE '[0-9]+' || true)
+            if [ -n "$PID" ]; then
+                echo "launchd: RUNNING (watcher pid $PID)"
+            else
+                echo "launchd: loaded but NOT running (crash-looping? check $STATE/daemon.err.log)"
+            fi
+        else
+            echo "launchd: not loaded (run: vma load)"
+        fi
+        if pgrep -f "$STATE/watchdog.sh" >/dev/null 2>&1; then
+            echo "watchdog: armed (resident, checks every 60s, pid $(pgrep -f "$STATE/watchdog.sh" | head -1))"
+        elif launchctl print "$DOMAIN/$WD_LABEL" >/dev/null 2>&1; then
+            echo "watchdog: loaded but NOT running (run: vma load to kickstart it)"
+        else
+            echo "watchdog: NOT armed"
+        fi
+        if [ -f "$STATE/heartbeat" ]; then
+            HB_AGE=$(( $(date +%s) - $(stat -f %m "$STATE/heartbeat") ))
+            echo "heartbeat: ${HB_AGE}s ago"
+        fi
+        if [ -f "$STATE/status.json" ]; then
+            echo "status:"; cat "$STATE/status.json"
+        else
+            echo "status: none yet"
+        fi
+        ;;
+    log)
+        tail -n 40 -f "$STATE/log.txt"
+        ;;
+    doctor)
+        # definitive folder-access test in the REAL daemon context: a one-shot
+        # launchd agent (not a terminal child, which inherits the terminal's
+        # permissions) runs vma-reader against the Voice Memos folder.
+        TLABEL="industries.ritual.voice-memo-ai.doctor"
+        TPLIST="$HOME/Library/LaunchAgents/$TLABEL.plist"
+        OUT="/tmp/vma-doctor.out"
+        rm -f "$OUT"
+        cat > "$TPLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$TLABEL</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/bash</string><string>-c</string>
+    <string>"$STATE/bin/vma-reader" list "$HOME/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings" > $OUT 2>&1; echo "exit=\$?" >> $OUT</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+</dict></plist>
+EOF
+        launchctl bootstrap "$DOMAIN" "$TPLIST" 2>/dev/null || true
+        launchctl kickstart "$DOMAIN/$TLABEL" 2>/dev/null || true
+        for _ in $(seq 1 20); do [ -f "$OUT" ] && grep -q "exit=" "$OUT" 2>/dev/null && break; sleep 0.5; done
+        launchctl bootout "$DOMAIN/$TLABEL" 2>/dev/null || true
+        rm -f "$TPLIST"
+        if grep -q "exit=0" "$OUT" 2>/dev/null; then
+            N=$(grep -cv "exit=" "$OUT")
+            echo "DOCTOR: PASS — daemon context can read the Voice Memos folder ($N files via vma-reader)."
+        else
+            echo "DOCTOR: FAIL — the daemon cannot read the Voice Memos folder."
+            echo "  Grant Full Disk Access to: $STATE/bin/vma-reader"
+            echo "  (System Settings → Privacy & Security → Full Disk Access → + → Cmd+Shift+G → paste the path)"
+            [ -f "$OUT" ] && sed -n '1,3p' "$OUT" | sed 's/^/  > /'
+        fi
+        ;;
+    reader-rebuild)
+        # deliberate helper update: rebuild + re-sign. The new binary has a NEW
+        # code identity — macOS will require re-granting Full Disk Access.
+        clang -O2 -Wall -o "$STATE/bin/vma-reader" "$PROJECT/helper/vma-reader.c"
+        codesign --force --sign - "$STATE/bin/vma-reader"
+        echo "rebuilt vma-reader — RE-GRANT Full Disk Access to it, then: vma doctor"
+        ;;
+    config)
+        # open the configurator UI. Starts the local server if it isn't already
+        # running, then opens the browser. The server is on-demand (not always-on).
+        PORT=8787
+        if ! curl -s "http://localhost:$PORT/status" >/dev/null 2>&1; then
+            echo "starting configurator server..."
+            nohup "$PYTHON" "$PROJECT/configurator/server.py" > "$STATE/configurator.out" 2>&1 &
+            for i in $(seq 1 15); do
+                curl -s "http://localhost:$PORT/status" >/dev/null 2>&1 && break
+                sleep 1
+            done
+        fi
+        echo "opening http://localhost:$PORT"
+        open "http://localhost:$PORT"
+        ;;
+    *)
+        echo "usage: vma {load|unload|restart|status|log|config|doctor|reader-rebuild}"; exit 1
+        ;;
+esac
