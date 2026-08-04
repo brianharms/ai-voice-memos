@@ -76,7 +76,6 @@
   }
   body.side-collapsed .side-resize{display:none}
   body.resizing{cursor:col-resize;user-select:none}
-  @media (max-width:920px){ .side-resize{display:none} }
   .side-head{display:flex;align-items:center;gap:4px;margin-bottom:10px;position:relative}
   .sort-menu{
     position:absolute;top:32px;right:56px;z-index:30;min-width:170px;
@@ -124,9 +123,8 @@
     -webkit-mask-image:linear-gradient(180deg,#000 45%,transparent 97%);
     mask-image:linear-gradient(180deg,#000 45%,transparent 97%);
   }
-  @media (max-width:920px){
-    .sidebar,.side-open{display:none !important}
-  }
+  /* narrow windows auto-stack via JS (applyLayout) — no hard CSS hide, so the
+     floating reopen button always offers a way back to the sidebar */
 
   /* Glass (chrome-less WKWebView): the html.in-glass class is set for any
      Glass-specific tweaks. The old 25px top offset was removed once Glass's
@@ -1177,12 +1175,15 @@ async function refreshActivity(){
 // ---------- sidebar layout ----------
 // Automations live in the sidebar; Activity always stays in the main column.
 // Collapsing the sidebar stacks Automations back into the main column.
-const SIDE_KEY = 'vma.sidebarCollapsed';  // '1' = hidden
+const SIDE_KEY = 'vma.sidebarCollapsed';  // '1' hidden · '0' default · 'force' open even when narrow
 const WIDTH_KEY = 'vma.sidebarWidth';
 const COND_KEY = 'vma.condsHidden';       // '1' = condition text hidden in sidebar
 const narrowMQ = matchMedia('(max-width:920px)');
 function applyLayout(){
-  const collapsed = localStorage.getItem(SIDE_KEY)==='1' || narrowMQ.matches;
+  const pref = localStorage.getItem(SIDE_KEY) || '0';
+  // narrow windows auto-stack by default, but an explicit reopen ('force')
+  // wins — the sidebar must never become unreachable
+  const collapsed = pref==='1' || (narrowMQ.matches && pref!=='force');
   document.body.classList.toggle('side-collapsed', collapsed);
   const auto=$('autoSection');
   (collapsed ? $('mainSlot') : $('sideSlot')).appendChild(auto);
@@ -1220,7 +1221,11 @@ function wireLayout(){
     applyLayout();
   };
   $('sideCollapse').onclick = ()=>{ localStorage.setItem(SIDE_KEY,'1'); applyLayout(); };
-  $('sideOpen').onclick = ()=>{ localStorage.setItem(SIDE_KEY,'0'); applyLayout(); };
+  $('sideOpen').onclick = ()=>{
+    // in a narrow window plain '0' would still auto-stack — force it open
+    localStorage.setItem(SIDE_KEY, narrowMQ.matches ? 'force' : '0');
+    applyLayout();
+  };
   narrowMQ.addEventListener('change', applyLayout);
   // drag-to-resize
   const rz = $('sideResize');
