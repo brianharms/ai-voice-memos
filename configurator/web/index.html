@@ -1125,7 +1125,8 @@ async function refreshActivity(){
     list.forEach(a=>{
       if (a.outcome==='ran' && a.skill){
         const t = Date.parse((a.time||'').replace(' ','T')) || 0;
-        if (t > (lr[a.skill]||0)) lr[a.skill] = t;
+        // a.skill may list several skills ("/note, /wordcount") — credit each
+        a.skill.split(', ').forEach(s=>{ if (t > (lr[s]||0)) lr[s] = t; });
       }
     });
     const lrChanged = JSON.stringify(lr) !== JSON.stringify(LAST_RUN);
