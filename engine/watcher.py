@@ -806,6 +806,10 @@ def write_status() -> None:
         "claude_ok": claude_ok(),
         "folder_ok": _FOLDER_OK[0],
         "poll": POLL_INTERVAL,
+        # batch progress for the UI ("2 of 3"): position counts completed+current
+        # within the current burst of memos; resets when the queue drains.
+        "queue": {"position": _BATCH["done"] + 1, "total": _BATCH["total"]}
+                 if _BATCH["total"] else None,
     }
     try:
         _atomic_write(STATUS_FILE, json.dumps(status, indent=2))
@@ -1215,6 +1219,16 @@ def parse_activity(limit: int = 50) -> list:
         if not m:
             continue
         ts, body = m.group(1), m.group(2)
+        # a daemon (re)start while a skill was mid-run means that run was KILLED
+        # (SIGKILL — no finished line will ever come). Mark it so the UI can say
+        # so instead of showing a completed-looking card with no result.
+        if body.startswith("watcher start"):
+            if cur is not None and cur.get("_started", 0) > cur.get("_finished", 0):
+                cur["outcome"] = "interrupted"
+                cur["reason"] = ("This run was interrupted by a daemon restart and won't "
+                                 "re-run automatically. The transcript is saved — re-run it "
+                                 "from a live session.")
+            continue
         if body.startswith("NEW memo:"):
             push()
             name = body.split("NEW memo:", 1)[1].strip()
@@ -1274,9 +1288,15 @@ def parse_activity(limit: int = 50) -> list:
             cur["outcome"] = "ran"
             em = re.search(r"exit (\d+)", body)
             cur["result"] = "done" if (em and em.group(1) == "0") else f"exit {em.group(1) if em else '?'}"
+            # NOTE: start/finish counts are only a RESTART-interruption heuristic.
+            # Concurrent runs (daemon + a manual rerun) interleave log lines across
+            # entries, so counts don't reliably balance — live in-flight state
+            # comes from processing.json below, never from these counters.
+            cur["_finished"] = cur.get("_finished", 0) + 1
         elif body.startswith("-> running"):
             sm = re.search(r"running (\S+)", body)
             if sm: cur["skill"] = sm.group(1)
+            cur["_started"] = cur.get("_started", 0) + 1
     push()
     entries.reverse()
     # a retried memo logs 'NEW memo' once per attempt — keep only the newest entry
@@ -1317,10 +1337,24 @@ def parse_activity(limit: int = 50) -> list:
         tx_ids = {p.stem for p in TRANSCRIPTS_DIR.iterdir() if p.suffix == ".txt"}
     except Exception:
         tx_ids = set()
+    # live in-flight state comes from the daemon's own processing.json (via
+    # read_status, which also verifies the daemon is actually alive) — the log
+    # counters can't be trusted for this because concurrent runs interleave.
+    proc = (read_status() or {}).get("processing") or {}
+    proc_name = proc.get("memo_name")
     for e in entries:
         mid = e.get("memo_id")
         e["has_audio"] = bool(mid and mid in audio_ids)
         e["has_transcript"] = bool(mid and mid in tx_ids)
+        # match by stable id — the entry's memo_name carries an "(id …)" suffix
+        e["in_flight"] = bool(proc_name and mid and mid in proc_name
+                              and e.get("outcome") in ("ran", "running"))
+        e["running_skill"] = None
+        if e["in_flight"]:
+            sm = re.search(r"running (/\S+?)…?$", str(proc.get("stage") or ""))
+            if sm:
+                e["running_skill"] = sm.group(1)
+        e.pop("_started", None); e.pop("_finished", None)
     return entries
 
 def read_status() -> dict:
@@ -1353,6 +1387,8 @@ def read_status() -> dict:
                 s["processing"] = json.loads(PROCESSING_FILE.read_text())
         except Exception:
             pass
+    else:
+        s["queue"] = None   # stale batch counts from a dead daemon are noise
     return s
 
 # ---- pipeline steps (worker thread only) --------------------------------------
@@ -1568,6 +1604,9 @@ _QUEUE = queue.Queue()
 _PENDING_LOCK = threading.Lock()
 _PENDING = set()                 # sids queued or in-flight (don't re-enqueue)
 _WORKER_BUSY = [None]            # (sid, memo_name, started_monotonic) or None
+# batch progress for the UI: a "batch" is a burst of memos from first enqueue
+# until the queue fully drains. done counts finished memos in this batch.
+_BATCH = {"total": 0, "done": 0}
 
 def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
     """The full pipeline for one memo. Runs on the worker thread; every subprocess
@@ -1730,6 +1769,9 @@ def worker_loop(dry_run: bool) -> None:
             _WORKER_BUSY[0] = None
             with _PENDING_LOCK:
                 _PENDING.discard(sid)
+                _BATCH["done"] += 1
+                if not _PENDING:          # queue drained — batch over
+                    _BATCH["total"] = _BATCH["done"] = 0
             clear_processing()
             live_end()
 
@@ -1811,6 +1853,7 @@ def detection_loop(dry_run: bool, last_progress: list) -> None:
             for sid, path in detect_pass(start_time):
                 with _PENDING_LOCK:
                     _PENDING.add(sid)
+                    _BATCH["total"] += 1
                 # IMMEDIATE feedback: show detection in the UI the moment we see the
                 # memo (only if the worker isn't already showing another memo's stage).
                 if _WORKER_BUSY[0] is None:

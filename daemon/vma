@@ -220,6 +220,34 @@ EOF
         echo "opening http://localhost:$PORT"
         open "http://localhost:$PORT"
         ;;
+    reload-engine)
+        # Safe engine deploy: copy the repo's engine into STATE, then restart the
+        # daemon ONLY when it is truly idle. The correct idle check is
+        # processing.json (the daemon deletes it after each memo) — status.json
+        # NEVER contains `processing`; reading it raw always looks idle, and a
+        # kickstart on that basis killed a live /ideaDaemon run on 2026-08-03.
+        cp "$WATCHER" "$STATE/engine/watcher.py"
+        [ -f "$PROJECT/engine/device_deploy.py" ] && cp "$PROJECT/engine/device_deploy.py" "$STATE/engine/device_deploy.py"
+        echo "engine copied — waiting for the daemon to go idle before restarting…"
+        DEADLINE=$(( $(date +%s) + 7200 ))
+        while :; do
+            BUSY=0
+            if [ -s "$STATE/processing.json" ] && grep -q "memo_name" "$STATE/processing.json" 2>/dev/null; then
+                BUSY=1
+            fi
+            pgrep -f "sandbox-exec.*skill" >/dev/null 2>&1 && BUSY=1
+            [ "$BUSY" = 0 ] && break
+            if [ "$(date +%s)" -gt "$DEADLINE" ]; then
+                echo "still busy after 2h — NOT restarting. Run again later."; exit 1
+            fi
+            sleep 15
+        done
+        launchctl kickstart -k "$DOMAIN/$LABEL"
+        sleep 3
+        pgrep -f "$STATE/engine/watcher.py" >/dev/null 2>&1 \
+            && echo "daemon restarted on the new engine." \
+            || { echo "ERROR: daemon did not come back — check $STATE/daemon.err.log"; exit 1; }
+        ;;
     notify)
         # vma notify you@icloud.com   set where completion texts go + send a test
         # vma notify test             re-send the test to the current target
@@ -251,6 +279,6 @@ EOF
         esac
         ;;
     *)
-        echo "usage: vma {load|unload|restart|status|log|config|notify|doctor|reader-rebuild}"; exit 1
+        echo "usage: vma {load|unload|restart|status|log|config|notify|reload-engine|doctor|reader-rebuild}"; exit 1
         ;;
 esac

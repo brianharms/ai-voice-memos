@@ -101,7 +101,6 @@
   .side-btn:hover{background:var(--track-off);color:var(--label)}
   .side-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .side-btn.active{background:var(--track-off);color:var(--label)}
-  body.conds-hidden .sidebar .cond-input{display:none}
   .side-open{
     display:none;position:fixed;top:14px;left:14px;z-index:50;
     width:32px;height:32px;border-radius:8px;border:0;
@@ -194,6 +193,11 @@
   .status-title{font-size:17px;font-weight:650;letter-spacing:-.01em}
   .status-sub{margin-top:2px;font-size:13px;color:var(--secondary)}
   .status-sub .dot-sep{margin:0 6px;color:var(--tertiary)}
+  .queue-badge{
+    flex:none;align-self:flex-start;font-size:12px;font-weight:600;
+    color:var(--red);background:var(--red-tint);border-radius:100px;padding:3px 10px;
+    white-space:nowrap;
+  }
 
   /* staged progress (appears while a memo is being worked) */
   .steps{display:none;margin-top:16px}
@@ -237,11 +241,20 @@
 
   /* ---------- automations ---------- */
   .row{
-    display:flex;align-items:flex-start;gap:13px;padding:13px 16px;
+    display:flex;flex-direction:column;padding:13px 16px;
     border-bottom:1px solid var(--sep);
   }
   .row:last-child{border-bottom:0}
-  .row.off .row-main{opacity:.45}
+  .row-head{display:flex;align-items:center;gap:13px;width:100%}
+  .row.off .row-title-line,.row.off .cond-input{opacity:.45}
+  /* conditions drop below the head line and span the full row width */
+  .row .cond-input{margin-top:8px}
+  .row-cond-btn{
+    background:none;border:0;padding:0 3px;font-size:11px;line-height:1;
+    color:var(--tertiary);border-radius:4px;
+  }
+  .row-cond-btn:hover{color:var(--blue)}
+  .row-cond-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .tile{
     flex:none;width:32px;height:32px;border-radius:8px;margin-top:1px;
     display:flex;align-items:center;justify-content:center;
@@ -492,6 +505,7 @@
           <div id="statusTitle" class="status-title">Starting up…</div>
           <div id="statusSub" class="status-sub"></div>
         </div>
+        <span id="queueBadge" class="queue-badge" style="display:none" title="Memos in this batch"></span>
       </div>
       <div class="steps" aria-hidden="true">
         <div class="steps-track"><b id="st1"></b><b id="st2"></b><b id="st3"></b><b id="st4"></b></div>
@@ -574,6 +588,7 @@ let confirmDelIdx = null;      // rule index awaiting delete confirmation
 const EXPANDED = new Set();    // rule indexes whose condition stays fully expanded
 let SORT = localStorage.getItem('vma.skillSort') || 'custom';  // custom | alpha | recent
 let LAST_RUN = {};             // skill -> epoch ms of most recent run (from Activity)
+let ROW_COND = {};             // skill -> shown? — per-row override of the global toggle
 
 // display order: enabled rules first, then disabled — each group in the chosen sort.
 // Returns ORIGINAL indexes into RULES so editing/saving stays index-stable.
@@ -741,6 +756,14 @@ async function refreshStatus(){
 
   const card = $('statusCard');
   const processing = !!(s.processing && s.processing.memo_name);
+  // queue badge: only interesting when a batch has more than one memo
+  const qb = $('queueBadge');
+  if (running && s.queue && s.queue.total > 1){
+    qb.textContent = `${Math.min(s.queue.position, s.queue.total)} of ${s.queue.total}`;
+    qb.style.display = '';
+  } else {
+    qb.style.display = 'none';
+  }
   card.classList.toggle('idle', !running);
   card.classList.toggle('processing', running && processing);
 
@@ -838,9 +861,16 @@ function renderRules(){
   renderAdd();
   wireRules();
 }
+function condVisible(skill){
+  // per-row override beats the global conditions toggle
+  if (skill in ROW_COND) return ROW_COND[skill];
+  return localStorage.getItem(COND_KEY) !== '1';
+}
 function ruleRow(r, i){
-  const namePart = `<div class="row-title-line">
+  const shown = condVisible(r.skill);
+  const namePart = `<div class="row-title-line" style="flex:1;min-width:0">
     <button type="button" class="skill-btn" data-doc="${esc(r.skill)}" title="What does this skill do?">${esc(r.skill)}</button>
+    <button type="button" class="row-cond-btn" data-rowcond="${i}" title="${shown?'Hide':'Show'} condition" aria-expanded="${shown}">${shown?'▾':'▸'}</button>
   </div>`;
   const controls = confirmDelIdx === i
     ? `<div class="del-confirm">
@@ -851,12 +881,12 @@ function ruleRow(r, i){
        <button type="button" class="switch" role="switch" aria-checked="${r.enabled}" data-toggle="${i}" title="${r.enabled?'On':'Off'}"></button>`;
   const dragAttrs = SORT==='custom' ? `draggable="true" data-dragidx="${i}" title="Drag to reorder"` : '';
   return `<div class="row ${r.enabled?'':'off'}" data-i="${i}">
-    ${tileFor(r.skill, dragAttrs)}
-    <div class="row-main">
+    <div class="row-head">
+      ${tileFor(r.skill, dragAttrs)}
       ${namePart}
-      <textarea class="cond-input" rows="1" data-cond="${i}" placeholder="Describe when this should run…">${esc(r.condition)}</textarea>
+      ${controls}
     </div>
-    ${controls}
+    ${shown ? `<textarea class="cond-input" rows="1" data-cond="${i}" placeholder="Describe when this should run…">${esc(r.condition)}</textarea>` : ''}
   </div>`;
 }
 function renderAdd(){
@@ -882,6 +912,11 @@ function renderAdd(){
 }
 function wireRules(){
   const box = $('rules');
+  box.querySelectorAll('[data-rowcond]').forEach(b=>b.onclick=()=>{
+    const skill = RULES[+b.dataset.rowcond].skill;
+    ROW_COND[skill] = !condVisible(skill);
+    renderRules();
+  });
   box.querySelectorAll('[data-toggle]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.toggle; RULES[i].enabled=!RULES[i].enabled; renderRules(); saveRules().catch(console.error); });
   // two-step delete: ✕ asks first, Remove commits
   box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ confirmDelIdx=+b.dataset.del; renderRules(); });
@@ -941,6 +976,7 @@ const SUMMARY = {
   blocked:'Flagged for review — nothing was run.',
   blank:'No speech detected — skipped.',
   running:'Matching against your automations…',
+  interrupted:'Interrupted by a restart — the work did not finish.',
 };
 function relTime(iso){
   if(!iso) return '';
@@ -961,7 +997,7 @@ function actTitle(a){
 }
 function renderActivity(list){
   const box = $('activity');
-  const key = JSON.stringify(list.map(a=>[a.time,a.memo_name,a.outcome,a.skill,a.result,a.snippet,a.reason,a.result_obj,a.result_objs,a.title,a.summary,a.has_audio,a.has_transcript]));
+  const key = JSON.stringify(list.map(a=>[a.time,a.memo_name,a.outcome,a.skill,a.result,a.snippet,a.reason,a.result_obj,a.result_objs,a.title,a.summary,a.has_audio,a.has_transcript,a.in_flight,a.running_skill]));
   if (key === lastActivityKey) return;
   lastActivityKey = key;
   ACT_BY_ID = {};
@@ -1000,7 +1036,10 @@ function renderActivity(list){
       return h;
     }
     let footer = '';
-    if (isRan){
+    if (isRan && a.in_flight){
+      // routed and started, but the skill hasn't logged "finished" yet
+      footer = `<span class="pill live"><span class="beat"></span>Running ${esc(a.running_skill || a.skill || '')}…</span>`;
+    } else if (isRan){
       footer = `<span class="ran-note">Ran <b>${esc(a.skill||'')}</b></span>${resultHTML}`;
     } else if (isRunning){
       footer = `<span class="pill live"><span class="beat"></span>Routing</span>`;
