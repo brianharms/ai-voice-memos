@@ -1193,7 +1193,8 @@ def parse_activity(limit: int = 50) -> list:
             rm = re.search(r"\((.*)\)\s*$", body)
             if rm: reason = rm.group(1)
             if skills:
-                cur["outcome"] = "ran"; cur["skill"] = skills[0]  # provisional until 'finished'
+                # show EVERY routed skill, not just the first/last one run
+                cur["outcome"] = "ran"; cur["skill"] = ", ".join(skills)
                 cur["reason"] = reason or None   # routing explanation for the details panel
             else:
                 cur["outcome"] = "unrouted"; cur["reason"] = reason or "no skill fit — held"
@@ -1204,8 +1205,10 @@ def parse_activity(limit: int = 50) -> list:
             em = re.search(r"exit (\d+)", body)
             cur["result"] = "done" if (em and em.group(1) == "0") else f"exit {em.group(1) if em else '?'}"
         elif body.startswith("-> running"):
+            # fallback for logs without a parsed 'route ->' line; never clobber
+            # the full multi-skill list set above
             sm = re.search(r"running (\S+)", body)
-            if sm: cur["skill"] = sm.group(1)
+            if sm and not cur["skill"]: cur["skill"] = sm.group(1)
     push()
     entries.reverse()
     # a retried memo logs 'NEW memo' once per attempt — keep only the newest entry
