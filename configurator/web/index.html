@@ -344,7 +344,7 @@
   }
   .btn-cancel:hover{color:var(--label)}
 
-  /* The user's controls: cancel / save for later / pause, and the saved list */
+  /* the user's controls: cancel / save for later / pause, and the saved list */
   .memo-ctl{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .pause-btn{flex:none;align-self:flex-start;margin-left:8px}
   .parked{margin-top:14px;border-top:1px solid var(--track-off);padding-top:10px}
@@ -624,8 +624,6 @@
 </button>
 <div class="wrap">
 
-  <!-- tabs: Voice Memos | Phone (Phone tab: web/phone.js, configurator/phone.py).
-       server.py strips everything between the PHONE markers when ~/services/switchboard is absent. -->
   
 
   <div id="vmPanel">
@@ -725,7 +723,6 @@
     <span id="footNote" data-multi="Runs on your own Mac mini and MacBook. Recordings and transcripts stay on your devices.">Runs on your own Mac. Recordings and transcripts stay on your devices.</span>
   </div>
   </div><!-- /vmPanel -->
-  <div id="phonePanel"></div>
 </div>
 </main>
 </div>
@@ -770,6 +767,7 @@ const EXPANDED = new Set();    // rule indexes whose condition stays fully expan
 let SORT = localStorage.getItem('vma.skillSort') || 'custom';  // custom | alpha | recent
 let LAST_RUN = {};             // skill -> epoch ms of most recent run (from Activity)
 let HOSTS = {};                // skill -> "mini" | "laptop" (which machine runs it)
+let MULTI = false;             // two-machine setup (a role file exists): show which Mac runs what
 let ROLE = '';                 // "mini" when this configurator is the Mac mini's
 
 // ---------- Mac mini / MacBook ----------
@@ -814,6 +812,8 @@ function miniDoing(stage){
   return 'Working on a memo';
 }
 function routeChips(routes){
+  // on a single Mac there is only one place a skill can run, so no host label
+  if (!MULTI) return (routes||[]).map(r=>`<span class="run-chip"><span>${esc(r.skill)}</span></span>`).join('');
   return (routes||[]).map(r=>
     `<span class="run-chip" title="${esc(r.skill)} runs on your ${HOST_NAME[r.host]}">${hostIcon(r.host, 14)}<span>${esc(r.skill)} → ${HOST_NAME[r.host]}</span></span>`).join('');
 }
@@ -1019,6 +1019,7 @@ async function refreshStatus(){
   card.classList.toggle('idle', !running);
   card.classList.toggle('processing', running && processing);
   ROLE = s.role || ROLE;
+  MULTI = !!s.multi_machine;
   if (s.multi_machine){   // two-machine setup (a role file exists): use the Mac mini / MacBook wording
     for (const id of ['lede','footNote']){ const el = $(id); if (el && el.dataset.multi && el.textContent !== el.dataset.multi) el.textContent = el.dataset.multi; }
   }
@@ -1104,7 +1105,7 @@ async function refreshLive(){
   if (!lv.active){ wrap.classList.remove('on'); return; }
   wrap.classList.add('on');
   $('liveStage').textContent = lv.stage || '';
-  const rk = JSON.stringify(lv.routes||[]);
+  const rk = JSON.stringify([MULTI, lv.routes||[]]);
   if ($('stepsRoutes').dataset.k !== rk){ $('stepsRoutes').dataset.k = rk; $('stepsRoutes').innerHTML = routeChips(lv.routes); }
   const con = $('liveConsole');
   if (lv.memo_id !== liveMemoId || (lv.events||[]).length < liveCount){
@@ -1950,8 +1951,7 @@ async function boot(){
   await refreshStatus();
   await refreshActivity();
   await refreshModel();
-  // poll only the visible tab (window.VMA_TAB is set by phone.js)
-  const vmVisible = () => window.VMA_TAB !== 'phone';
+  const vmVisible = () => true;   // one tab
   setInterval(()=>{ if (vmVisible()) refreshStatus(); }, 2000);
   setInterval(()=>{ if (vmVisible()) refreshActivity(); }, 4000);
   setInterval(()=>{ if (vmVisible()) refreshModel(); }, 5000);   // picks up menu-bar changes
