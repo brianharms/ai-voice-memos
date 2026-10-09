@@ -1,5 +1,5 @@
 #!/bin/bash
-# vma — control the Voice Memo AI always-on watcher (launchd).
+# vma — control the AI Voice Memos always-on watcher (launchd).
 #   vma load     install + start the daemon + external watchdog (auto-start on login)
 #   vma unload   stop + remove both (disable)
 #   vma restart  unload then load
@@ -436,7 +436,7 @@ EOF
         fi
         ;;
     pause|resume|cancel|later)
-        # The user's controls (engine: request_control). cancel/later take a memo id,
+        # the user's controls (engine: request_control). cancel/later take a memo id,
         # or no id = the memo being processed (or waiting behind a pause) right now.
         mkdir -p "$STATE/control"
         case "$1" in

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Voice Memo AI — handoff queue CLI (runs on the Mac mini).
+"""AI Voice Memos — handoff queue CLI (runs on the Mac mini).
 
-The MacBook's helper (macbook_worker.py) calls this over ssh; the switchboard's
-hub/handoff.sh calls it locally to queue a phone request. Prints one JSON object.
+A second Mac's helper calls this over ssh. Prints one JSON object.
 
   handoff_cli.py waiting               every waiting job, oldest first; counts as a MacBook check-in
   handoff_cli.py take <job>            that waiting job -> claimed by the MacBook ({} if gone)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice Memo AI — Configurator backend.
+AI Voice Memos — Configurator backend.
 
 A tiny stdlib HTTP server that is a WINDOW onto the always-on watcher daemon.
 It does NOT control the daemon's lifecycle (launchd owns that). It reads shared
@@ -34,11 +34,6 @@ import watcher as W  # noqa: E402
 import os
 PORT = int(os.environ.get("VMA_CONFIGURATOR_PORT") or 8787)   # override only for test harnesses
 WEB_DIR = Path(__file__).resolve().parent / "web"   # where index.html will live
-
-
-def _phone_available() -> bool:
-    """The Phone tab needs the switchboard service (same root phone.py reads)."""
-    return Path(os.environ.get("SB_ROOT", str(Path.home() / "services" / "switchboard"))).exists()
 
 
 # A per-run secret. The server serves the page (same-origin) and injects this token
@@ -83,7 +78,6 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/status":
                 st = W.read_status()
                 st["multi_machine"] = W.ROLE_FILE.exists()
-                st["phone"] = _phone_available()
                 self._send(200, st)
             elif p == "/live":
                 self._send(200, W.read_live())
@@ -144,24 +138,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
                 self.wfile.write(data)
-            elif p.startswith("/phone/"):
-                # the Phone tab (switchboard): see configurator/phone.py
-                import phone
-                code, body = phone.get(p)
-                self._send(code, body)
-            elif p == "/phone.js":
-                js = WEB_DIR / "phone.js"
-                self._send(200, js.read_text(), "text/javascript; charset=utf-8") if js.exists() \
-                    else self._send(404, {"error": "not found"})
             elif p == "/" or p == "/index.html":
                 idx = WEB_DIR / "index.html"
                 html = idx.read_text() if idx.exists() else _STUB
                 # inject the write-token so the served page (same-origin) can send it
                 # on POSTs. A cross-origin page can't read this HTML, so can't get it.
                 html = html.replace("__VMA_TOKEN__", SESSION_TOKEN or "")
-                if not _phone_available():
-                    # no switchboard on this Mac: no Phone tab (and no tab bar for one tab)
-                    html = re.sub(r"<!--PHONE-->.*?<!--/PHONE-->", "", html, flags=re.S)
                 if "__VMA_TOKEN__" not in (idx.read_text() if idx.exists() else _STUB):
                     # also expose via meta tag if the page didn't use the placeholder
                     html = html.replace("<head>", f'<head><meta name="vma-token" content="{SESSION_TOKEN}">', 1)
@@ -197,7 +179,7 @@ class Handler(BaseHTTPRequestHandler):
                 icon = W.generate_skill_icon(name, glyphs[:64])
                 self._send(200 if icon else 502, icon or {"error": "icon generation failed"})
             elif p == "/control":
-                # The user's controls: {"action": "pause"|"resume"|"cancel"|"later"|"release"
+                # the user's controls: {"action": "pause"|"resume"|"cancel"|"later"|"release"
                 #   |"runhere"|"handoff_cancel", "id": optional (memo id, or handoff job id)}
                 action = str(payload.get("action", "")).strip()
                 sid = str(payload.get("id", "") or "").strip()
@@ -232,11 +214,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "expected key"})
                 W.hide_activity_entry(key)
                 self._send(200, {"ok": True})
-            elif p.startswith("/phone/"):
-                # the Phone tab (switchboard): see configurator/phone.py
-                import phone
-                code, body = phone.post(p, payload)
-                self._send(code, body)
             elif p == "/skill-open":
                 # open the SKILL.md in the user's default editor (local action;
                 # path comes from read_skill_doc's validated lookup, never the client)
@@ -258,10 +235,10 @@ class Handler(BaseHTTPRequestHandler):
 # minimal placeholder page until the real design is dropped into web/index.html.
 # The token is injected server-side into __VMA_TOKEN__; the real design page should
 # read it from <meta name="vma-token"> and send it as the X-VMA-Token header on POST.
-_STUB = """<!doctype html><html><head><meta charset=utf-8><title>Voice Memo AI</title>
+_STUB = """<!doctype html><html><head><meta charset=utf-8><title>AI Voice Memos</title>
 <meta name="vma-token" content="__VMA_TOKEN__"></head>
 <body style="font-family:ui-monospace,monospace;background:#111;color:#ddd;padding:2rem">
-<h2>Voice Memo AI — Configurator (backend running)</h2>
+<h2>AI Voice Memos — Configurator (backend running)</h2>
 <p>API is live. Drop the real design into <code>configurator/web/index.html</code>.</p>
 <p>Endpoints: <a href=/status style=color:#8bd>/status</a> ·
 <a href=/rules style=color:#8bd>/rules</a> ·

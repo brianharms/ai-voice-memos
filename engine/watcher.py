@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice Memo AI — watcher engine.
+AI Voice Memos — watcher engine.
 
 Watches the iCloud Voice Memos folder; for each NEW memo: transcribe -> route via
 `claude -p` against rules.txt -> run the chosen skill(s) headless.
@@ -922,7 +922,7 @@ def _finish_stopped(sid: str, name: str) -> None:
 # live iCloud-synced on BOTH machines, plus MacBook-only things (worktrees, device
 # installs). Two machines committing into one synced .git is how repos get damaged,
 # so the Mini queues those runs here and a helper on the MacBook
-# (engine/macbook_worker.py) claims them over Tailscale whenever the laptop is awake.
+# (not part of the public release) claims them over ssh whenever the laptop is awake.
 # A job moves waiting/ -> claimed/ -> done/ by atomic rename, so it can only ever be
 # claimed once — by the MacBook, or by the Mini when the user says "Run on Mini now".
 ROLE_FILE = STATE_DIR / "role"              # "mini" on the always-on Mac mini
@@ -2126,7 +2126,7 @@ def write_all_rules(rules: list) -> None:
     are written as '# skill : condition' (the comment=disabled convention the engine
     reads). Keeps a header so the file stays human-editable too."""
     lines = [
-        "# Voice Memo AI — rules",
+        "# AI Voice Memos — rules",
         "# One rule per line:  /skill-name : plain-language condition for when it should run",
         "# Managed by the configurator; also editable by hand. Comment a line to disable.",
         "",
@@ -2262,7 +2262,7 @@ def parse_activity(limit: int = 50) -> list:
                    "reason": "detected — waiting for the current memo to finish"})
             continue
         elif body.startswith(("cancelled:", "saved for later:")):
-            # The user stopped it (configurator / menu bar / vma). Newer entry for the
+            # the user stopped it (configurator / menu bar / vma). Newer entry for the
             # same id wins the dedupe, so this replaces its queued/running card.
             later = body.startswith("saved for later:")
             name = body.split(":", 1)[1].split(" — ")[0].strip()
@@ -3128,7 +3128,7 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
         live_event("error", f"transcription failed — will retry ({n + 1}/{MAX_ATTEMPTS})")
         return   # left un-seen -> re-detected next poll; attempts cap bounds retries
     if _stop_requested(sid):
-        return   # The user cancelled / parked it mid-transcription
+        return   # the user cancelled / parked it mid-transcription
 
     if is_noise(transcript):
         log("    -> blank/noise transcript, skipping.")
@@ -3225,7 +3225,7 @@ def process_memo(sid: str, m4a: Path, dry_run: bool) -> None:
         # The memo asks Claude to drive the computer (screen/mouse/keyboard,
         # desktop-app UI). Daemon runs are headless + sandboxed with no MCP
         # tools, so this can only be done from a live Claude Code session with
-        # The user present. Hold it (at-most-once still applies) and text him the
+        # the user present. Hold it (at-most-once still applies) and text him the
         # one-liner that runs it interactively.
         log(f"    -> needs live session (held; run: /directtoclaude {sid})")
         live_event("route", f"needs a live session — run /directtoclaude {sid} in a CLI")
