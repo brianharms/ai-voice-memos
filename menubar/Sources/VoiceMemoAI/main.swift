@@ -1,7 +1,7 @@
 import SwiftUI
 import Foundation
 
-// Voice Memo AI — menu-bar app.
+// AI Voice Memos — menu-bar app.
 // A thin native shell over the existing daemon + web configurator. It shells out
 // to the `vma` control script (launchd + config server) so the user never touches
 // a terminal, and polls the daemon's status.json to show a live glyph.
@@ -200,7 +200,7 @@ struct VoiceMemoAIApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Voice Memo AI", systemImage: glyph) {
+        MenuBarExtra("AI Voice Memos", systemImage: glyph) {
             // status line
             if model.status.running {
                 let tick = model.status.lastPollSecondsAgo.map { "\($0)s ago" } ?? ""

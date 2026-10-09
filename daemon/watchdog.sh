@@ -1,5 +1,5 @@
 #!/bin/bash
-# Voice Memo AI — EXTERNAL watchdog (a RESIDENT loop under its own LaunchAgent).
+# AI Voice Memos — EXTERNAL watchdog (a RESIDENT loop under its own LaunchAgent).
 #
 # Why a resident loop and not StartInterval: on modern macOS, launchd defers
 # "nondemand" spawns (RunAtLoad / StartInterval / KeepAlive respawns) with

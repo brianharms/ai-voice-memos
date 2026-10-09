@@ -1,11 +1,11 @@
 ---
 name: note
-description: Autonomous daemon skill — invoked by Voice Memo AI (no human present) when a voice memo is a personal note, journal entry, thought, or "note to self" that should simply be saved somewhere easy to find. Appends a cleaned-up copy of the memo to today's dated markdown note in ~/Voice Notes/. Never asks questions, never waits for input.
+description: Autonomous daemon skill — invoked by AI Voice Memos (no human present) when a voice memo is a personal note, journal entry, thought, or "note to self" that should simply be saved somewhere easy to find. Appends a cleaned-up copy of the memo to today's dated markdown note in ~/Voice Notes/. Never asks questions, never waits for input.
 ---
 
 # /note — save a memo to today's note
 
-You run unattended, started by the Voice Memo AI daemon. Nobody can answer a
+You run unattended, started by the AI Voice Memos daemon. Nobody can answer a
 question. Do the job, write the result envelope, finish.
 
 ## Input contract

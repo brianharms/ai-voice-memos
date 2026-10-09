@@ -200,12 +200,12 @@ Both edit the same file.
 ````markdown
 ---
 name: recipe
-description: Autonomous daemon skill — invoked by Voice Memo AI (no human present) when a voice memo describes a recipe, a dish to try, or a cooking idea. Writes a tidy recipe card to ~/Recipes/. Never asks questions, never waits for input.
+description: Autonomous daemon skill — invoked by AI Voice Memos (no human present) when a voice memo describes a recipe, a dish to try, or a cooking idea. Writes a tidy recipe card to ~/Recipes/. Never asks questions, never waits for input.
 ---
 
 # /recipe — turn a spoken recipe into a recipe card
 
-You run unattended, started by the Voice Memo AI daemon. Nobody can answer a
+You run unattended, started by the AI Voice Memos daemon. Nobody can answer a
 question. Do the job, write the result envelope, finish.
 
 ## Input contract

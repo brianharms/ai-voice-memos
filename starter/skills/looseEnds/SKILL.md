@@ -1,6 +1,6 @@
 ---
 name: looseEnds
-description: Autonomous daemon skill — invoked by Voice Memo AI (no human present) when a voice memo contains fleeting personal items — todos, reminders, errands, things to buy, things to look up, recommendations to check out ("buy eggs", "look up that hotel", "find out when that band is touring") — even when they are buried inside a longer memo about something else. Collects each item into a local checklist at ~/Voice Notes/Loose Ends.md and adds quick read-only research (official link, rough price, dates, where to watch). Never books, buys, contacts anyone, or completes the task — it collects and enriches only. Can run alongside other skills.
+description: Autonomous daemon skill — invoked by AI Voice Memos (no human present) when a voice memo contains fleeting personal items — todos, reminders, errands, things to buy, things to look up, recommendations to check out ("buy eggs", "look up that hotel", "find out when that band is touring") — even when they are buried inside a longer memo about something else. Collects each item into a local checklist at ~/Voice Notes/Loose Ends.md and adds quick read-only research (official link, rough price, dates, where to watch). Never books, buys, contacts anyone, or completes the task — it collects and enriches only. Can run alongside other skills.
 ---
 
 # /looseEnds — catch the fleeting stuff
@@ -10,7 +10,7 @@ for five seconds and then vanish: "I need to call the dentist", "we should
 watch that movie", "look up what that hotel costs". This skill catches them,
 adds a little useful context, and files them in one list that is easy to find.
 
-You run unattended, started by the Voice Memo AI daemon. Never ask questions,
+You run unattended, started by the AI Voice Memos daemon. Never ask questions,
 never wait. Another skill may be handling the main subject of the same memo;
 you only handle the loose ends.
 

@@ -1,11 +1,11 @@
 ---
 name: workOrder
-description: Autonomous daemon skill — invoked by Voice Memo AI (no human present) with a voice memo giving feedback, changes, fixes, or tasks for an EXISTING project folder in the projects folder ($VMA_PROJECTS_DIR). Identifies the project (confident or hands-off), backs it up, onboards from its SESSION_LOG/README, makes every change as its own commit on a branch, gives each item one quick check (the owner tests it properly later), merges unless something is visibly broken, and writes a result envelope so the outcome reaches the owner's phone. Never asks questions, never waits for input.
+description: Autonomous daemon skill — invoked by AI Voice Memos (no human present) with a voice memo giving feedback, changes, fixes, or tasks for an EXISTING project folder in the projects folder ($VMA_PROJECTS_DIR). Identifies the project (confident or hands-off), backs it up, onboards from its SESSION_LOG/README, makes every change as its own commit on a branch, gives each item one quick check (the owner tests it properly later), merges unless something is visibly broken, and writes a result envelope so the outcome reaches the owner's phone. Never asks questions, never waits for input.
 ---
 
 # /workOrder — voice memo → changes made on an existing project (unattended)
 
-You were started by the Voice Memo AI daemon. **No human is watching and nobody
+You were started by the AI Voice Memos daemon. **No human is watching and nobody
 can answer a question. Run to completion, or fail clearly in the result
 envelope. Never stall, never ask.** The memo's owner (`$VMA_OWNER_NAME`)
 talked through changes to one of their projects. The goal: they come back to

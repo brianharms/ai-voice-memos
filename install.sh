@@ -1,5 +1,5 @@
 #!/bin/bash
-# Voice Memo AI — installer.
+# AI Voice Memos — installer.
 #
 #   ./install.sh            set everything up, asking before each change
 #   ./install.sh --dry-run  walk through every step, but only PRINT what it would do
@@ -104,7 +104,7 @@ except Exception: print("")' "$1" "$2" 2>/dev/null
 
 # ------------------------------------------------------------------ intro ----
 
-say "Voice Memo AI — installer"
+say "AI Voice Memos — installer"
 say ""
 say "Record a voice memo on your iPhone. This Mac transcribes it locally, Claude"
 say "picks the right skill and does the work, and you get a text when it's done."
@@ -249,7 +249,7 @@ if [ ! -x "$CLAUDE" ]; then
                 if [ "$DRY" = 1 ]; then
                     say "  [dry run] would write $CLAUDE: exec \"$NODE\" \"$OTHER\" \"\$@\""
                 else
-                    printf '#!/bin/bash\n# Written by Voice Memo AI install.sh so the daemon can run Claude Code.\n# If you change node versions, delete this file and run ./install.sh again.\nexec "%s" "%s" "$@"\n' \
+                    printf '#!/bin/bash\n# Written by AI Voice Memos install.sh so the daemon can run Claude Code.\n# If you change node versions, delete this file and run ./install.sh again.\nexec "%s" "%s" "$@"\n' \
                         "$NODE" "$OTHER" > "$CLAUDE" && chmod +x "$CLAUDE" && ok "wrote $CLAUDE"
                 fi
             fi
@@ -396,7 +396,7 @@ case ":$PATH:" in
            if [ "$DRY" = 1 ]; then
                run "append export PATH=\"\$HOME/.local/bin:\$PATH\" to ~/.zshrc"
            else
-               printf '\n# Voice Memo AI + Claude Code\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zshrc"
+               printf '\n# AI Voice Memos + Claude Code\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zshrc"
                ok "added to ~/.zshrc (open a new Terminal window to use it)"
            fi
        else

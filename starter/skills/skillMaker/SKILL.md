@@ -1,11 +1,11 @@
 ---
 name: skillMaker
-description: Autonomous daemon skill — invoked by Voice Memo AI (no human present) when a voice memo says the speaker wants to CREATE A NEW SKILL for their voice-memo pipeline — "make a new voice memo skill that…", "add a skill that…", "I want a skill for when I…" — describing what it should do and when it should run. Writes the new skill's SKILL.md into ~/.claude/skills/<name>/, adds its routing rule to ~/.voice-memo-ai/rules.txt, and checks that the router would actually pick it. Also usable interactively ("/skillMaker" plus a description). Never asks questions in daemon runs.
+description: Autonomous daemon skill — invoked by AI Voice Memos (no human present) when a voice memo says the speaker wants to CREATE A NEW SKILL for their voice-memo pipeline — "make a new voice memo skill that…", "add a skill that…", "I want a skill for when I…" — describing what it should do and when it should run. Writes the new skill's SKILL.md into ~/.claude/skills/<name>/, adds its routing rule to ~/.voice-memo-ai/rules.txt, and checks that the router would actually pick it. Also usable interactively ("/skillMaker" plus a description). Never asks questions in daemon runs.
 ---
 
 # /skillMaker — turn a spoken description into a working pipeline skill
 
-A memo described a new skill the owner wants in their Voice Memo AI pipeline.
+A memo described a new skill the owner wants in their AI Voice Memos pipeline.
 Your product is a skill that is **registered like the others**: a folder in
 `~/.claude/skills/` and a rule line in `~/.voice-memo-ai/rules.txt`, and
 **proven** to be picked up, not just assumed. A half-registered skill never
@@ -34,7 +34,7 @@ runs and nobody notices, so check your work.
 - **Name:** the speaker's name for it if given, else coin one. One short word
   or two words in camelCase (`recipeBox`, `gymLog`), easy to say aloud.
 
-If the memo actually asks to change the Voice Memo AI app itself, build only
+If the memo actually asks to change the AI Voice Memos app itself, build only
 the skill part and say so in the envelope.
 
 ## 2. Learn the house style first
@@ -68,7 +68,7 @@ makes skills, improve this file instead of duplicating it.
 
 Frontmatter: `name` (same as the folder) and `description`. The description
 says WHEN to use the skill, starting "Autonomous daemon skill — invoked by
-Voice Memo AI (no human present) when…", under 1024 characters. The body is
+AI Voice Memos (no human present) when…", under 1024 characters. The body is
 written for a headless agent that knows nothing about this conversation:
 concrete paths, exact commands, how to check the result, and one worked
 example.

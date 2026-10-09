@@ -1,4 +1,4 @@
-# Voice Memo AI — rules
+# AI Voice Memos — rules
 # One rule per line:  /skill-name : plain-language condition for when it should run
 # Managed by the configurator; also editable by hand. Comment a line to disable.
 
