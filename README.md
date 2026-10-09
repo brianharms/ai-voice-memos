@@ -1,108 +1,200 @@
 # AI Voice Memos
 
-**Automations for your voice memos.** Record a thought on your iPhone; a
-daemon on your Mac transcribes it, decides which of your Claude skills it
-warrants, runs them autonomously, and pushes the result back to your phone.
-Say an idea out loud on a walk — come home to a deployed site, an executed
-work order, or a tidy list of errands.
+**Automations for your voice memos.** Record a thought on your iPhone and your
+Mac takes it from there: it transcribes the memo locally, Claude picks the
+skill that fits, and the skill does the work (saves a note, collects your
+errands, makes changes to one of your projects, or builds something new). When
+it's done, you get a text.
 
-![The configurator](assets/configurator.png)
+![The configurator: automations on the left, a work order running with its task board, and recent results](assets/overview-light.png)
 
 ## How it works
 
 ```
-iPhone Voice Memo ──iCloud──▶ Mac
-      │
-      ▼
- watcher daemon (launchd, polls every 4s)
-      │  vma-reader (the ONLY thing with Full Disk Access) copies the audio out
-      ▼
- ffmpeg → whisper.cpp  ──▶ transcript (persisted per memo)
-      │
-      ▼
- router (slim `claude -p` call, small model) reads your rules.txt
-      │   picks EVERY skill genuinely warranted — one, several, or none —
-      │   and writes a title + summary for the activity feed
-      ▼
- skill runs (`claude -p`, sandboxed via sandbox-exec, headless, autonomous)
-      │
-      ▼
- result envelopes → web configurator (localhost:8787) + iMessage push to you
+iPhone Voice Memos ──iCloud──▶ your Mac
+                                  │
+            transcribed on the Mac with whisper.cpp (nothing uploaded)
+                                  │
+            Claude reads your rules ("/note : when the memo is a note to self…")
+            and picks every skill that fits: one, several, or none
+                                  │
+            each skill runs as a sandboxed, unattended Claude Code session
+                                  │
+            result in the configurator's Activity feed + an optional iMessage
 ```
 
-| Component | What it is |
-|---|---|
-| `engine/watcher.py` | The always-on daemon: detection, transcription, routing, sandboxed skill execution, state, health probe. Single file, stdlib only. |
-| `helper/vma-reader.c` | ~50-line C helper that is the *only* code granted Full Disk Access to the Voice Memos container. Built once; its code identity (and therefore the TCC grant) never churns. |
-| `configurator/` | Local web UI (stdlib HTTP server + a single HTML page): arm/disarm automations, edit routing conditions in plain language, watch live processing, browse the activity feed with transcripts and playback. Loopback-only, token-gated writes. |
-| `daemon/vma` | Control script: `vma load / unload / status / doctor / config / log`. Installs the launchd agents (daemon + external watchdog). |
-| `menubar/` | Optional Swift menu-bar app: live status glyph, enable/disable, open configurator. |
+A memo can trigger more than one skill. A ramble about a project that also
+mentions "buy potting soil" can update the project *and* file the errand.
 
-## Skills and rules
+## What you need
 
-The daemon runs **your** Claude Code skills (`~/.claude/skills/<name>/SKILL.md`).
-`rules.txt` maps each skill to a plain-language condition:
-
-```
-/note : when the memo is a personal note, reminder, or thought to save for later
-/idea : when the memo describes a new project to build
-```
-
-The router reads the conditions like a person would — no keywords, no regex.
-A memo can trigger several skills at once (an idea ramble that also mentions
-"buy stamps" can build the idea *and* file the errand). Start from
-`rules.example.txt` and point it at skills you actually have.
-
-## Safety model
-
-Voice memos are untrusted input being fed to an autonomous agent, so there are
-several independent layers:
-
-- **Timestamp gate** — only memos recorded *after* the watcher started are ever
-  touched. Your backlog is a hard privacy wall.
-- **Tripwire** — a deterministic pre-execution scan; transcripts containing
-  destructive commands or agent-directed injection patterns are held for
-  review, never routed.
-- **Untrusted framing** — the transcript is passed to skills inside explicit
-  markers with instructions to treat it as data, never as instructions.
-- **Allowlist** — the router's output can only invoke skills declared in
-  rules.txt; malformed router output cannot run arbitrary commands.
-- **OS sandbox** — skill runs execute under `sandbox-exec` profiles that deny
-  deletion of project folders and writes to `~/.ssh`, the engine itself, and
-  backups, even if everything above fails.
-- **At-most-once** — a memo is marked seen before skills run; a crash mid-run
-  never causes a double-execution (no double deploys).
-
-## Requirements
-
-- macOS (Apple Silicon or Intel) with **Voice Memos iCloud sync** enabled
-- [Claude Code](https://claude.com/claude-code) CLI (`claude`), logged in
-- `ffmpeg` and `whisper-cpp` (Homebrew) + a whisper model (`ggml-medium.en.bin`)
-- Xcode Command Line Tools (to build the tiny `vma-reader` helper; the menu-bar
-  app additionally needs a Swift toolchain)
+- A Mac with Apple Silicon that stays on and logged in, with about 3 GB free.
+- An iPhone on the same Apple ID, with **Voice Memos syncing through iCloud**.
+- [Homebrew](https://brew.sh).
+- [Claude Code](https://claude.com/claude-code), signed in. Every memo runs
+  Claude, and project work uses a lot of it, so a **Max plan is recommended**.
+- Messages signed in on the Mac, if you want texts.
 
 ## Install
 
-See **[AGENTS.md](AGENTS.md)** — written so you can hand it to a coding agent
-(Claude Code) and have it perform the install, pausing only for the two steps
-that genuinely require a human (macOS permission grants).
+```bash
+git clone https://github.com/brianharms/ai-voice-memos.git
+cd ai-voice-memos
+./install.sh
+```
 
-## Configuration
+The installer checks your Mac, asks before every change, and never uses
+`sudo`. It installs `whisper-cpp` and `ffmpeg` with Homebrew, downloads the
+speech model (about 1.5 GB), copies the five starter skills into
+`~/.claude/skills/`, and starts the background daemon. Run it again any time;
+finished steps are skipped. `./install.sh --dry-run` prints every step without
+changing anything.
 
-Environment variables (set in the launchd plist or before `vma load`):
+**Already have Claude Code?** The installer uses it, wherever it lives (the
+native installer, npm, Homebrew, nvm). It links it where the daemon looks and
+only checks that you're signed in. If you don't have it, it offers the official
+installer.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `VMA_IMESSAGE_TARGET` | *(empty)* | Override for where completion texts go. Prefer `vma notify <apple-id>` — it persists the target and sends a test text that surfaces the one-time Messages permission prompt. |
-| `VMA_WATCH_DIR` | Voice Memos container | Watch a different folder of audio files. |
-| `VMA_TRUSTED_SKILLS` | `/workOrder,/directtoclaude` | Skills that run under the *trusted* sandbox profile (project folders writable). |
-| `VMA_DEPLOY_DIR` | `~/Desktop/Claude Projects/deployments` | Git-versioned folder deploy skills may rewrite under the strict profile. |
-| `VMA_ROUTER_MODEL` | `sonnet` | Model for the routing call (it's a tiny classification — keep it small). |
-| `VMA_PROBE_INTERVAL` | `900` | Seconds between Claude health probes. |
-| `VMA_SECRETS` | `~/.secrets/api_keys.sh` | Sourced at daemon start; new exports are injected into skill-run environments. |
+### The one manual step: Full Disk Access
 
-## Status
+macOS protects the Voice Memos folder. One tiny helper,
+`~/.voice-memo-ai/bin/vma-reader`, needs **Full Disk Access** to read it, and
+nothing else gets any special permission. The installer opens the right System
+Settings page and shows you the file in Finder: drag it into the list and
+switch it on. Check it any time with `vma doctor`.
 
-A personal tool, built with [Claude Code](https://claude.com/claude-code) and
-shared as-is — expect to adapt paths, skills, and taste to your own setup.
-Issues and PRs welcome but response times are whimsical.
+The first text also makes macOS ask whether the daemon may control Messages.
+Click **Allow**.
+
+## Your first memo
+
+Memos recorded **before** you installed are never touched. Record a new one on
+your iPhone:
+
+> "Note to self: the spare key is in the blue drawer."
+
+A minute or two after it syncs, it appears in the configurator and you get a
+text. The note lands in `~/Voice Notes/<today>.md`. Then try a mixed one:
+
+> "Remind me to buy stamps, and look up when the farmers market opens on Saturday."
+
+## The starter skills
+
+| Skill | Runs when a memo… |
+|---|---|
+| `/note` | is a thought or note to self. Saved to `~/Voice Notes/<date>.md`. |
+| `/looseEnds` | mentions todos, errands, things to buy or look up. Collected in `~/Voice Notes/Loose Ends.md`, with links and prices where useful. |
+| `/workOrder` | asks for changes to a project in your projects folder. Works on a branch with one commit per change and a backup first. |
+| `/directtoclaude` | is addressed to Claude ("Claude, this one's for you…"). Claude decides what to make. Runs on its own, never alongside other skills. |
+| `/skillMaker` | asks for a new skill ("make a new voice memo skill that…"). Writes it and switches it on. |
+
+## The configurator
+
+`vma config` opens a page on your Mac at `http://localhost:8787`. It only
+listens on your own machine.
+
+| | |
+|---|---|
+| ![Activity feed](assets/activity-light.png) | ![A work order's task board](assets/task-board-light.png) |
+| **Activity**: every memo with its title, what was done, the transcript, and playback. | **Task board**: click a running skill to see its steps and helpers live. |
+| ![Automations](assets/automations-light.png) | ![Editing a condition](assets/condition-editor-light.png) ![Model and effort](assets/settings-light.png) |
+| **Automations**: switch skills on and off, reorder, add one. | **Conditions** are edited in plain words. **Model and effort** set the default for every run. |
+
+Dark mode follows your Mac (`assets/*-dark.png`).
+
+## Write your own skills
+
+A skill is a folder in `~/.claude/skills/<name>/` with a `SKILL.md`, plus one
+line in `~/.voice-memo-ai/rules.txt` that says, in plain English, when it
+should run:
+
+```
+/recipe : when the memo describes a recipe or a cooking idea. Not for grocery lists on their own.
+```
+
+The easiest way is to say it: record *"Make a new voice memo skill that… and
+run it when…"* and `/skillMaker` writes and registers it. To write one by
+hand, or to learn how routing decides, read **[docs/SKILLS.md](docs/SKILLS.md)**.
+
+## Everyday commands
+
+```
+vma status          is it running?
+vma log             watch it work
+vma config          open the configurator
+vma doctor          check every dependency and the Full Disk Access grant
+vma notify <id>     where texts go (your Apple ID email or phone); vma notify off stops them
+vma pause / resume  hold new memos / let them through again
+vma cancel [id]     stop the memo in progress (or a queued one)
+vma unload          stop the daemon and remove it from login
+```
+
+## Costs and limits
+
+- Every memo uses your Claude plan. Routing is a small, cheap call; the skills
+  are full Claude Code sessions, and project work can run for a long time.
+- If you hit your usage limit, memos wait and run once it clears. Nothing is lost.
+- It only works while the Mac is on, awake, and logged in.
+- The default speech model is English (`ggml-medium.en`).
+- Skills run unattended, so they don't ask questions. When unsure, they stop
+  and tell you instead of guessing.
+- A memo runs at most once. If a run is interrupted, it is not retried by
+  itself; the Activity card says so.
+
+## Privacy and safety
+
+Recording, transcription, and the daemon stay on your Mac. What leaves it is
+what Claude needs to do the work: the transcript and any files a skill reads,
+sent to Anthropic like any Claude Code session, plus any web lookups a skill
+makes.
+
+A voice memo is untrusted input to an autonomous agent, so there are several
+independent guards:
+
+- **Only new memos.** Anything recorded before setup is never read.
+- **Tripwire.** Transcripts with destructive commands or text aimed at the
+  agent are held for you, not run (`vma release <id>` lets one through).
+- **Untrusted framing.** Skills get the transcript between explicit markers
+  and treat it as data, never as instructions.
+- **Allowlist.** The router can only choose skills listed in your rules.
+- **OS sandbox.** Skills run under macOS `sandbox-exec`: they cannot delete
+  your project folders, touch `~/.ssh`, or modify the daemon itself.
+- **At most once.** A crash never causes a double run.
+
+## Troubleshooting
+
+Start with `vma doctor`. It checks folder access, tools, the speech model,
+Claude sign-in, the launchd jobs, and that every skill in your rules exists.
+
+| Symptom | Fix |
+|---|---|
+| Nothing happens after recording | Voice Memos iCloud sync must be on, on **both** the iPhone and the Mac (Settings > your name > iCloud > Voice Memos). Open Voice Memos on the Mac once and check your memo shows up there. |
+| An old memo was ignored | Expected: memos recorded before setup are skipped. Record a new one. |
+| `vma doctor` says it can't read the folder | Full Disk Access for `~/.voice-memo-ai/bin/vma-reader` is missing or off. Re-add it, then `vma restart`. |
+| "claude is NOT logged in" | Run `claude`, sign in (`/login`), then `vma restart`. |
+| A memo shows "nothing ran" | No condition matched. Make a condition more specific, or add a skill for it (see docs/SKILLS.md). |
+| A memo is "held" | The tripwire flagged it. Read the transcript; `vma release <id>` runs it anyway. |
+| No texts | `vma notify you@example.com` sends a test; click Allow on the Messages prompt. Messages must be signed in on the Mac. |
+| Playback says recordings are unavailable | The configurator was started from a context macOS blocks. Stop its process and run `vma config` again from Terminal. |
+
+Logs live in `~/.voice-memo-ai/` (`log.txt` is the activity log; `daemon.err.log` has crashes).
+
+## Uninstall
+
+```bash
+vma unload
+```
+
+This stops the daemon and removes it from login. Your notes, skills
+(`~/.claude/skills/`), and settings and history (`~/.voice-memo-ai/`) are left
+in place; delete them yourself if you want them gone, and remove `vma-reader`
+from Full Disk Access in System Settings.
+
+## For coding agents
+
+[AGENTS.md](AGENTS.md) is the terse version of all of this for an agent
+installing or changing the project.
+
+## License
+
+See [LICENSE](LICENSE).
