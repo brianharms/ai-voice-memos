@@ -10,8 +10,17 @@ set -euo pipefail
 LABEL="industries.ritual.voice-memo-ai"
 WD_LABEL="industries.ritual.voice-memo-ai.watchdog"
 HOME_DIR="$HOME"
-# the repo root = wherever this script lives (daemon/vma → repo)
-PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The project is wherever this script really lives (vma is usually a symlink in
+# ~/.local/bin). Resolve symlinks portably: macOS bash 3.2 / older readlink have no -f.
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do
+    _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+    _src="$(readlink "$_src")"
+    case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
+done
+PROJECT="$(cd -P "$(dirname "$_src")/.." 2>/dev/null && pwd || true)"
+[ -f "$PROJECT/engine/watcher.py" ] || PROJECT="$HOME/Desktop/Claude Projects/voice-memo-ai"
+unset _src _dir
 # Apple's system python, NOT homebrew's: the Full Disk Access grant that lets the
 # daemon read the Voice Memos folder is tied to the binary's code identity.
 # Homebrew python is ad-hoc signed — every brew upgrade changes its identity and
@@ -27,6 +36,35 @@ DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DEST_WD_PLIST="$HOME/Library/LaunchAgents/$WD_LABEL.plist"
 STATE="$HOME/.voice-memo-ai"
 DEST_WD_SCRIPT="$STATE/watchdog.sh"
+# the MacBook's helper (claims project work the Mac mini queues for it)
+MB_LABEL="industries.ritual.vma-macbook"
+MB_PLIST="$HOME/Library/LaunchAgents/$MB_LABEL.plist"
+# always-on configurator (Mac mini) — served from a copy in STATE, because launchd
+# python can't read the iCloud Desktop project (TCC); the phone mirror reads it
+CFG_LABEL="industries.ritual.vma-configurator"
+CFG_PLIST="$HOME/Library/LaunchAgents/$CFG_LABEL.plist"
+# MacBook: a standing ssh tunnel so http://localhost:8787 there is the Mini's configurator
+TUN_LABEL="industries.ritual.vma-configurator-tunnel"
+TUN_PLIST="$HOME/Library/LaunchAgents/$TUN_LABEL.plist"
+
+copy_configurator() {
+    # every .py beside the server and everything under web/ (tabs may add their own files)
+    mkdir -p "$STATE/configurator/web"
+    cp "$PROJECT"/configurator/*.py "$STATE/configurator/"
+    cp -R "$PROJECT/configurator/web/." "$STATE/configurator/web/"
+}
+
+# every engine file a daemon or a skill runs, copied out of iCloud into STATE
+copy_engine() {
+    mkdir -p "$STATE/engine"
+    # the menu-bar app reads this to find vma (it can't assume where the repo lives)
+    printf '%s\n' "$PROJECT" > "$STATE/project-path"
+    cp "$WATCHER" "$STATE/engine/watcher.py"
+    for f in device_deploy.py handoff_cli.py macbook_worker.py; do
+        [ -f "$PROJECT/engine/$f" ] && cp "$PROJECT/engine/$f" "$STATE/engine/$f"
+    done
+    return 0
+}
 
 install_plist() {
     mkdir -p "$HOME/Library/LaunchAgents" "$STATE" "$STATE/bin" "$STATE/engine"
@@ -34,17 +72,12 @@ install_plist() {
     # non-iCloud, non-TCC-protected path — so launchd python needs NO macOS
     # permission to read its own code (the iCloud-Desktop project path needs a
     # Desktop grant, which churns; observed live).
-    cp "$WATCHER" "$STATE/engine/watcher.py"
     # companion tools skills invoke from inside the sandbox (engine dir is
     # write-denied to skills, so these can't be tampered with mid-run)
-    [ -f "$PROJECT/engine/device_deploy.py" ] && cp "$PROJECT/engine/device_deploy.py" "$STATE/engine/device_deploy.py"
-    # rules live in STATE for the same reason; seed from the repo copy once.
-    if [ ! -f "$STATE/rules.txt" ]; then
-        if [ -f "$PROJECT/rules.txt" ]; then
-            cp "$PROJECT/rules.txt" "$STATE/rules.txt"
-        elif [ -f "$PROJECT/rules.example.txt" ]; then
-            cp "$PROJECT/rules.example.txt" "$STATE/rules.txt"
-        fi
+    copy_engine
+    # rules live in STATE for the same reason; migrate the project copy once.
+    if [ ! -f "$STATE/rules.txt" ] && [ -f "$PROJECT/rules.txt" ]; then
+        cp "$PROJECT/rules.txt" "$STATE/rules.txt"
     fi
     # vma-reader: the ONLY code that touches the Voice Memos container. Built
     # ONCE and never rebuilt automatically — its code identity must stay fixed
@@ -108,6 +141,11 @@ start_daemon() {
 
 case "${1:-status}" in
     load)
+        if [ -f "$STATE/macbook" ]; then
+            echo "This is the MacBook: the watcher runs on the Mac mini. This Mac only runs the"
+            echo "helper that picks up project work (vma macbook-install). Remove $STATE/macbook to override."
+            exit 1
+        fi
         stop_daemon
         if start_daemon; then
             echo "loaded — watcher is always-on (starts at login, self-heals; external watchdog armed). pid $(pgrep -f "$STATE/engine/watcher.py" | head -1)"
@@ -169,7 +207,7 @@ case "${1:-status}" in
         # permissions) runs vma-reader against the Voice Memos folder.
         TLABEL="industries.ritual.voice-memo-ai.doctor"
         TPLIST="$HOME/Library/LaunchAgents/$TLABEL.plist"
-        OUT="/tmp/vma-doctor.out"
+        OUT="/tmp/vma-doctor-$(id -u).out"   # per user: a second account on the same Mac must not collide
         rm -f "$OUT"
         cat > "$TPLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -197,6 +235,50 @@ EOF
             echo "  (System Settings → Privacy & Security → Full Disk Access → + → Cmd+Shift+G → paste the path)"
             [ -f "$OUT" ] && sed -n '1,3p' "$OUT" | sed 's/^/  > /'
         fi
+        # --- everything else a memo needs, one line each ---
+        TP="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.npm-global/bin:$PATH"
+        findtool() { PATH="$TP" command -v "$1" 2>/dev/null || true; }
+        ok()  { echo "  ok    $*"; }
+        bad() { echo "  FIX   $*"; }
+        echo "checks:"
+        REC="$HOME/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
+        if [ -d "$HOME/Library/Group Containers/group.com.apple.VoiceMemos.shared" ]; then
+            ok "Voice Memos container present"
+        else
+            bad "Voice Memos container not found — open Voice Memos once (and turn on iCloud sync for it on your phone)"
+        fi
+        [ -x "$STATE/bin/vma-reader" ] && ok "vma-reader built ($STATE/bin/vma-reader)" \
+            || bad "vma-reader not built — run: vma load"
+        C="$(findtool claude)"
+        if [ -n "$C" ]; then
+            if "$C" auth status 2>/dev/null | grep -q '"loggedIn": *true' || [ -s "$STATE/claude-token" ]; then
+                ok "claude: $C (logged in)"
+            elif grep -q '"claude_ok": *true' "$STATE/status.json" 2>/dev/null; then
+                # over ssh the login keychain is locked, so auth status says no; the daemon's probe is the truth
+                ok "claude: $C (the daemon's last claude check passed)"
+            else
+                bad "claude: $C is NOT logged in — run: claude  (then /login), or vma set-account"
+            fi
+        else
+            bad "claude not found — install Claude Code (https://claude.com/claude-code)"
+        fi
+        W="$(findtool whisper-cli)"; [ -n "$W" ] && ok "whisper-cli: $W" || bad "whisper-cli not found — brew install whisper-cpp"
+        F="$(findtool ffmpeg)"; [ -n "$F" ] && ok "ffmpeg: $F" || bad "ffmpeg not found — brew install ffmpeg"
+        MF="$HOME/Library/Application Support/whisper/models/ggml-medium.en.bin"
+        if [ -s "$MF" ]; then ok "whisper model: $MF"
+        else bad "whisper model missing — curl -L --create-dirs -o \"$MF\" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin"; fi
+        T="$(cat "$STATE/imessage-target.txt" 2>/dev/null || true)"
+        [ -n "$T" ] && ok "iMessage texts on (to $T)" || ok "iMessage texts off (optional: vma notify <your-apple-id>)"
+        RULES="$STATE/rules.txt"; [ -f "$RULES" ] || RULES="$PROJECT/rules.txt"
+        if [ -f "$RULES" ]; then
+            for SK in $(grep -oE '^/[A-Za-z0-9_-]+' "$RULES" | sort -u); do
+                N="${SK#/}"
+                [ -f "$HOME/.claude/skills/$N/SKILL.md" ] && ok "skill $SK installed" \
+                    || bad "skill $SK is routed in rules.txt but ~/.claude/skills/$N/SKILL.md is missing (memos routed there are skipped)"
+            done
+        else
+            bad "no rules.txt — run: vma load"
+        fi
         ;;
     reader-rebuild)
         # deliberate helper update: rebuild + re-sign. The new binary has a NEW
@@ -218,7 +300,20 @@ EOF
             done
         fi
         echo "opening http://localhost:$PORT"
-        open "http://localhost:$PORT"
+        # prefer Glass (the chrome-less local viewer) when installed; fall back
+        # to the default browser. Resolve by absolute path too — the menubar
+        # app's shell may not have ~/bin on PATH. Glass's X closes the window
+        # but leaves the process alive, so always kill + respawn: every click
+        # deterministically produces a fresh window.
+        GLASS="$(command -v glass 2>/dev/null || true)"
+        [ -z "$GLASS" ] && [ -x "$HOME/bin/glass" ] && GLASS="$HOME/bin/glass"
+        if [ -n "$GLASS" ]; then
+            pkill -f "glass http://localhost:$PORT" 2>/dev/null || true
+            sleep 0.3
+            nohup "$GLASS" "http://localhost:$PORT" >/dev/null 2>&1 &
+        else
+            open "http://localhost:$PORT"
+        fi
         ;;
     reload-engine)
         # Safe engine deploy: copy the repo's engine into STATE, then restart the
@@ -226,8 +321,20 @@ EOF
         # processing.json (the daemon deletes it after each memo) — status.json
         # NEVER contains `processing`; reading it raw always looks idle, and a
         # kickstart on that basis killed a live /ideaDaemon run on 2026-08-03.
-        cp "$WATCHER" "$STATE/engine/watcher.py"
-        [ -f "$PROJECT/engine/device_deploy.py" ] && cp "$PROJECT/engine/device_deploy.py" "$STATE/engine/device_deploy.py"
+        copy_engine
+        if [ -f "$CFG_PLIST" ]; then
+            copy_configurator
+            launchctl kickstart -k "$DOMAIN/$CFG_LABEL" && echo "configurator restarted on the new page/server."
+        fi
+        if [ -f "$STATE/macbook" ]; then
+            # MacBook: restart the helper only between jobs (a running job has children)
+            MBPID="$(pgrep -f "$STATE/engine/macbook_worker.py" | head -1 || true)"
+            if [ -n "$MBPID" ] && pgrep -P "$MBPID" >/dev/null 2>&1; then
+                echo "engine copied; the MacBook helper is mid-job, so it picks up the new engine after a restart later (vma reload-engine again)."; exit 0
+            fi
+            launchctl kickstart -k "$DOMAIN/$MB_LABEL" && echo "MacBook helper restarted on the new engine."
+            exit 0
+        fi
         echo "engine copied — waiting for the daemon to go idle before restarting…"
         DEADLINE=$(( $(date +%s) + 7200 ))
         while :; do
@@ -235,7 +342,15 @@ EOF
             if [ -s "$STATE/processing.json" ] && grep -q "memo_name" "$STATE/processing.json" 2>/dev/null; then
                 BUSY=1
             fi
+            # NOTE: this never actually matches — sandbox-exec exec()s the skill in
+            # its own process, so "sandbox-exec" is gone from the command line by the
+            # time anything can see it. processing.json is what really covers daemon
+            # runs; left in place as a belt-and-braces no-op.
             pgrep -f "sandbox-exec.*skill" >/dev/null 2>&1 && BUSY=1
+            # a manual re-run (engine/rerun.py) is a separate process that deliberately
+            # does NOT write processing.json — without this, restarting "when idle"
+            # restarts straight through a running re-run (seen live 2026-09-18).
+            pgrep -f "rerun\.py" >/dev/null 2>&1 && BUSY=1
             [ "$BUSY" = 0 ] && break
             if [ "$(date +%s)" -gt "$DEADLINE" ]; then
                 echo "still busy after 2h — NOT restarting. Run again later."; exit 1
@@ -248,6 +363,17 @@ EOF
             && echo "daemon restarted on the new engine." \
             || { echo "ERROR: daemon did not come back — check $STATE/daemon.err.log"; exit 1; }
         ;;
+    release)
+        # vma release <id>   run a memo the tripwire held (the id is in the "held" text).
+        # The daemon picks the request up within a poll and processes the memo again,
+        # tripwire bypassed for that memo only. The sandbox still applies.
+        ID="${2:-}"
+        if [ -z "$ID" ]; then echo "usage: vma release <memo id>   (the id is in the held-memo text)"; exit 1; fi
+        case "$ID" in */*|.*) echo "not a memo id: $ID"; exit 1 ;; esac
+        mkdir -p "$STATE/release"
+        : > "$STATE/release/$ID"
+        echo "release requested for $ID — the daemon runs it within a few seconds (vma log to watch)."
+        ;;
     notify)
         # vma notify you@icloud.com   set where completion texts go + send a test
         # vma notify test             re-send the test to the current target
@@ -255,9 +381,9 @@ EOF
         TARGET="${2:-}"
         case "$TARGET" in
             "")
-                CUR="$(cat "$STATE/imessage-target.txt" 2>/dev/null || echo "(not set — using built-in default, if any)")"
-                echo "completion texts go to: $CUR"
-                echo "usage: vma notify <apple-id-email-or-phone> | test | off"
+                CUR="$(cat "$STATE/imessage-target.txt" 2>/dev/null || true)"
+                echo "completion texts go to: ${CUR:-(off — no target set)}"
+                echo "usage: vma notify <your-apple-id-email-or-phone> | test | off"
                 ;;
             off)
                 printf '' > "$STATE/imessage-target.txt"
@@ -278,7 +404,159 @@ EOF
                 ;;
         esac
         ;;
+    set-account)
+        # Daemon-only Claude account: a `claude setup-token` token in
+        # $STATE/claude-token pins router/probe/skill runs to that account while
+        # ~/.claude's own login (the interactive sessions) is left alone. The
+        # engine re-reads the file per memo — no restart. `vma set-account clear`
+        # falls back to the shared login.
+        TOKFILE="$STATE/claude-token"
+        if [ "${2:-}" = "clear" ]; then
+            rm -f "$TOKFILE"; echo "daemon account cleared — memos use the shared ~/.claude login."; exit 0
+        fi
+        CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
+        [ -z "$CLAUDE_BIN" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_BIN="$HOME/.local/bin/claude"
+        [ -z "$CLAUDE_BIN" ] && { echo "claude not found — install Claude Code first."; exit 1; }
+        echo "A browser will open. Make sure claude.ai there is signed in as the account"
+        echo "the daemon should use (switch accounts first if not), then approve."
+        echo
+        "$CLAUDE_BIN" setup-token || { echo "setup-token failed"; exit 1; }
+        echo
+        printf 'Paste the token printed above (starts sk-ant-oat…) and press Return: '
+        read -rs TOK; echo
+        TOK="$(printf '%s' "$TOK" | tr -d '[:space:]')"
+        case "$TOK" in sk-ant-*) ;; *) echo "that doesn't look like a token — nothing saved."; exit 1;; esac
+        ( umask 077; printf '%s\n' "$TOK" > "$TOKFILE" )
+        chmod 600 "$TOKFILE"
+        echo "saved to $TOKFILE (600). Checking it works…"
+        if OUT="$(CLAUDE_CODE_OAUTH_TOKEN="$TOK" "$CLAUDE_BIN" -p --model fable "Reply with just: ok" 2>&1)"; then
+            echo "token works (reply: $OUT). The next memo runs on this account."
+        else
+            echo "token saved but the test call failed: $OUT"
+        fi
+        ;;
+    pause|resume|cancel|later)
+        # The user's controls (engine: request_control). cancel/later take a memo id,
+        # or no id = the memo being processed (or waiting behind a pause) right now.
+        mkdir -p "$STATE/control"
+        case "$1" in
+            pause)  date -u +%FT%TZ > "$STATE/control/paused"; echo "paused — no new memo starts until 'vma resume'." ;;
+            resume) rm -f "$STATE/control/paused"; echo "resumed." ;;
+            *)      ID="${2:-current}"
+                    case "$ID" in */*|.*) echo "not a memo id: $ID"; exit 1 ;; esac
+                    date -u +%FT%TZ > "$STATE/control/$1-$ID"
+                    echo "$1 requested for ${ID} — the daemon picks it up within a few seconds (see: vma log)." ;;
+        esac
+        ;;
+    macbook-install)
+        # Run ON THE MACBOOK. Installs the helper that claims project work the Mac
+        # mini queues (skills set to run on the MacBook), over the ssh alias in $VMA_MINI_HOST (default: mini).
+        if [ -f "$STATE/role" ] && grep -q mini "$STATE/role"; then
+            echo "This Mac is marked as the Mac mini ($STATE/role) — not installing the MacBook helper."; exit 1
+        fi
+        [ -f "$PROJECT/engine/macbook_worker.py" ] || { echo "The two-Mac helper (engine/macbook_worker.py) is not included in this release."; exit 1; }
+        mkdir -p "$STATE" "$HOME/Library/LaunchAgents"
+        touch "$STATE/macbook"
+        copy_engine
+        cat > "$MB_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$MB_LABEL</string>
+  <key>ProgramArguments</key><array><string>$PYTHON</string><string>$STATE/engine/macbook_worker.py</string></array>
+  <key>WorkingDirectory</key><string>$STATE</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>$HOME</string>
+  </dict>
+  <key>StandardOutPath</key><string>$STATE/macbook.out.log</string>
+  <key>StandardErrorPath</key><string>$STATE/macbook.err.log</string>
+</dict></plist>
+PLIST
+        launchctl bootout "$DOMAIN/$MB_LABEL" 2>/dev/null || true
+        launchctl bootstrap "$DOMAIN" "$MB_PLIST"
+        launchctl kickstart "$DOMAIN/$MB_LABEL" 2>/dev/null || true
+        # http://localhost:8787 on this MacBook = the Mini's configurator, always
+        cat > "$TUN_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$TUN_LABEL</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/ssh</string><string>-N</string>
+    <string>-o</string><string>BatchMode=yes</string><string>-o</string><string>ExitOnForwardFailure=yes</string>
+    <string>-o</string><string>ServerAliveInterval=15</string><string>-o</string><string>ServerAliveCountMax=3</string>
+    <string>-L</string><string>8787:127.0.0.1:8787</string><string>${VMA_MINI_HOST:-mini}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardErrorPath</key><string>$STATE/configurator-tunnel.err</string>
+</dict></plist>
+PLIST
+        launchctl bootout "$DOMAIN/$TUN_LABEL" 2>/dev/null || true
+        launchctl bootstrap "$DOMAIN" "$TUN_PLIST"
+        launchctl kickstart "$DOMAIN/$TUN_LABEL" 2>/dev/null || true
+        sleep 2
+        pgrep -f "$STATE/engine/macbook_worker.py" >/dev/null \
+            && echo "MacBook helper running — it checks the Mac mini every 30s while this Mac is awake." \
+            || { echo "ERROR: helper didn't start — see $STATE/macbook.err.log"; exit 1; }
+        ;;
+    configurator-install)
+        # Run ON THE MAC MINI: keep the configurator up permanently (launchd, from a
+        # STATE copy) so the phone mirror and the MacBook's tunnel always have it.
+        copy_configurator
+        cat > "$CFG_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$CFG_LABEL</string>
+  <key>ProgramArguments</key><array><string>$PYTHON</string><string>$STATE/configurator/server.py</string></array>
+  <key>WorkingDirectory</key><string>$STATE</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>$HOME</string>
+  </dict>
+  <key>StandardOutPath</key><string>$STATE/configurator.out</string>
+  <key>StandardErrorPath</key><string>$STATE/configurator.err</string>
+</dict></plist>
+PLIST
+        # the on-demand copy (vma config / menu bar) holds the port — hand it over
+        pkill -f "voice-memo-ai/configurator/server.py" 2>/dev/null || true
+        sleep 1
+        launchctl bootout "$DOMAIN/$CFG_LABEL" 2>/dev/null || true
+        launchctl bootstrap "$DOMAIN" "$CFG_PLIST"
+        launchctl kickstart "$DOMAIN/$CFG_LABEL" 2>/dev/null || true
+        for _ in $(seq 1 20); do
+            curl -s -o /dev/null "http://localhost:8787/status" && { echo "configurator always-on at http://localhost:8787"; exit 0; }
+            sleep 0.5
+        done
+        echo "ERROR: configurator didn't answer — see $STATE/configurator.err"; exit 1
+        ;;
+    macbook-uninstall)
+        launchctl bootout "$DOMAIN/$MB_LABEL" 2>/dev/null || true
+        launchctl bootout "$DOMAIN/$TUN_LABEL" 2>/dev/null || true
+        rm -f "$MB_PLIST" "$TUN_PLIST"
+        echo "MacBook helper and configurator tunnel stopped and removed (marker $STATE/macbook kept)."
+        ;;
+    handoff)
+        # what's queued for / running on the MacBook (run on the Mac mini)
+        /usr/bin/python3 "$STATE/engine/handoff_cli.py" list | /usr/bin/python3 -c "
+import json,sys; d=json.load(sys.stdin); l=d.get('laptop') or {}
+print('MacBook:', 'awake' if l.get('online') else 'asleep/away', '· last seen', l.get('seen'))
+for j in d.get('jobs',[])[:20]: print(f\"  {j.get('state','?'):11} {j.get('skill','')}  {j.get('title') or ''}  [{j.get('job')}]\")
+"
+        ;;
+    parked)
+        /usr/bin/python3 -c "import json,sys; p=json.load(open(sys.argv[1])); [print(e['id'], e['at'], e['name']) for e in p] or print('nothing saved for later.')" "$STATE/parked.json" 2>/dev/null || echo "nothing saved for later."
+        echo "run one: vma release <id>"
+        ;;
     *)
-        echo "usage: vma {load|unload|restart|status|log|config|notify|reload-engine|doctor|reader-rebuild}"; exit 1
+        echo "usage: vma {load|unload|restart|status|log|config|notify|reload-engine|doctor|reader-rebuild|set-account [clear]|pause|resume|cancel [id]|later [id]|parked|handoff|configurator-install|macbook-install|macbook-uninstall}"; exit 1
         ;;
 esac

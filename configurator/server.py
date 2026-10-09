@@ -14,9 +14,14 @@ Endpoints (the design's HTML binds to these):
   POST /rules     <- [ { skill, condition, enabled } ]   (rewrites rules.txt)
   GET  /activity  -> [ { time, memo_name, snippet, outcome, skill, result, reason } ]
   GET  /skills    -> [ "/idea", "/note", ... ]           (available on disk)
+  GET  /model     -> { model, effort, models:[{id,label}], efforts:[{id,label}] }
+  GET  /board?key=<memo>--<skill> -> a run's task board (steps, workers), 404 if none
+  POST /model     <- { model?, effort? }   default for skill runs (also the menu bar's)
+  POST /summarize <- { id }   fills in the "what was done" summary on a memo's older results
   GET  /           -> the configurator page (index.html if present, else a stub)
 """
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,8 +31,14 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "engine"))
 import watcher as W  # noqa: E402
 
-PORT = 8787
+import os
+PORT = int(os.environ.get("VMA_CONFIGURATOR_PORT") or 8787)   # override only for test harnesses
 WEB_DIR = Path(__file__).resolve().parent / "web"   # where index.html will live
+
+
+def _phone_available() -> bool:
+    """The Phone tab needs the switchboard service (same root phone.py reads)."""
+    return Path(os.environ.get("SB_ROOT", str(Path.home() / "services" / "switchboard"))).exists()
 
 
 # A per-run secret. The server serves the page (same-origin) and injects this token
@@ -70,7 +81,10 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         try:
             if p == "/status":
-                self._send(200, W.read_status())
+                st = W.read_status()
+                st["multi_machine"] = W.ROLE_FILE.exists()
+                st["phone"] = _phone_available()
+                self._send(200, st)
             elif p == "/live":
                 self._send(200, W.read_live())
             elif p == "/rules":
@@ -79,6 +93,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, W.parse_activity(limit=100))
             elif p == "/skills":
                 self._send(200, W.list_available_skills())
+            elif p == "/model":
+                self._send(200, W.model_settings())
+            elif p == "/board":
+                # a run's task board for the Activity panel (key = envelope stem,
+                # validated in board_path — no traversal)
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query)
+                b = W.read_board((q.get("key") or [""])[0])
+                self._send(200 if b else 404, b or {"error": "no board"})
             elif p == "/skill":
                 # the SKILL.md content for the docs viewer (name validated
                 # against skills on disk inside read_skill_doc — no traversal)
@@ -121,12 +144,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
                 self.wfile.write(data)
+            elif p.startswith("/phone/"):
+                # the Phone tab (switchboard): see configurator/phone.py
+                import phone
+                code, body = phone.get(p)
+                self._send(code, body)
+            elif p == "/phone.js":
+                js = WEB_DIR / "phone.js"
+                self._send(200, js.read_text(), "text/javascript; charset=utf-8") if js.exists() \
+                    else self._send(404, {"error": "not found"})
             elif p == "/" or p == "/index.html":
                 idx = WEB_DIR / "index.html"
                 html = idx.read_text() if idx.exists() else _STUB
                 # inject the write-token so the served page (same-origin) can send it
                 # on POSTs. A cross-origin page can't read this HTML, so can't get it.
                 html = html.replace("__VMA_TOKEN__", SESSION_TOKEN or "")
+                if not _phone_available():
+                    # no switchboard on this Mac: no Phone tab (and no tab bar for one tab)
+                    html = re.sub(r"<!--PHONE-->.*?<!--/PHONE-->", "", html, flags=re.S)
                 if "__VMA_TOKEN__" not in (idx.read_text() if idx.exists() else _STUB):
                     # also expose via meta tag if the page didn't use the placeholder
                     html = html.replace("<head>", f'<head><meta name="vma-token" content="{SESSION_TOKEN}">', 1)
@@ -161,6 +196,47 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "expected glyphs: [names]"})
                 icon = W.generate_skill_icon(name, glyphs[:64])
                 self._send(200 if icon else 502, icon or {"error": "icon generation failed"})
+            elif p == "/control":
+                # The user's controls: {"action": "pause"|"resume"|"cancel"|"later"|"release"
+                #   |"runhere"|"handoff_cancel", "id": optional (memo id, or handoff job id)}
+                action = str(payload.get("action", "")).strip()
+                sid = str(payload.get("id", "") or "").strip()
+                if action == "release":
+                    if not re.fullmatch(r"[\w .\-]{1,80}", sid) or sid.startswith("."):
+                        return self._send(400, {"error": "release needs a valid memo id"})
+                    W.RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+                    (W.RELEASE_DIR / sid).write_text("")
+                    return self._send(200, {"ok": True, "action": "release"})
+                res = W.request_control(action, sid)
+                self._send(200 if res.get("ok") else 400, res)
+            elif p == "/model":
+                if not isinstance(payload, dict):
+                    return self._send(400, {"error": "expected {model?, effort?}"})
+                res = W.write_model_config(payload.get("model"), payload.get("effort"))
+                self._send(200 if res.get("ok") else 400, res)
+            elif p == "/hosts":
+                # which machine runs an automation: {"skill": "/workOrder", "host": "mini"|"laptop"}
+                res = W.write_host(str(payload.get("skill", "")), str(payload.get("host", "")))
+                self._send(200 if res.get("ok") else 400, res)
+            elif p == "/summarize":
+                # "what was done" for a finished memo whose result predates summaries:
+                # one slim model call per envelope, cached into the envelope itself
+                res = W.summarize_memo_results(str(payload.get("id", "")).strip())
+                self._send(400 if "error" in res else 200, res)
+            elif p == "/activity-hide":
+                # delete one entry from the activity feed (tombstone — the
+                # daemon log is never rewritten). Key comes from del_key on
+                # the /activity entries.
+                key = str(payload.get("key", "")).strip()
+                if not key:
+                    return self._send(400, {"error": "expected key"})
+                W.hide_activity_entry(key)
+                self._send(200, {"ok": True})
+            elif p.startswith("/phone/"):
+                # the Phone tab (switchboard): see configurator/phone.py
+                import phone
+                code, body = phone.post(p, payload)
+                self._send(code, body)
             elif p == "/skill-open":
                 # open the SKILL.md in the user's default editor (local action;
                 # path comes from read_skill_doc's validated lookup, never the client)

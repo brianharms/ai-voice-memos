@@ -1,0 +1,9 @@
+# Voice Memo AI — rules
+# One rule per line:  /skill-name : plain-language condition for when it should run
+# Managed by the configurator; also editable by hand. Comment a line to disable.
+
+/directtoclaude : when the memo is addressed straight to Claude — it opens with something like "this one's for Claude" or "Claude, this is for you", or talks to Claude in the second person and asks for work ("okay Claude, I want you to…"). Runs EXCLUSIVELY: when this skill is chosen, choose no other skill for the memo, because it handles everything the memo needs.
+/workOrder : when the memo gives feedback, changes, fixes, or tasks for an EXISTING project in my projects folder — it names the project or clearly describes it, and asks for changes to its code, behavior, or design. Also whenever the memo says "work order" about an existing project. Not for brand-new ideas, and not for creating a new voice-memo skill (that is /skillMaker).
+/skillMaker : when the memo says I want to CREATE A NEW SKILL for this voice-memo pipeline — e.g. "make a new voice memo skill that…", "add a skill that…" — describing what it should do and when it should run. This skill owns new-skill creation: do not also choose /workOrder for that part. Can run alongside other skills for unrelated parts of the memo.
+/looseEnds : when the memo contains fleeting personal items — todos, reminders, errands, things to buy, things to look up, recommendations to check out — even mixed into a longer memo about something else. Can run alongside other skills.
+/note : when the memo is a personal note, journal entry, thought, or "note to self" that should simply be saved — and no other skill is a better fit for the main content. Not for memos that are only a quick todo list (that is /looseEnds).
