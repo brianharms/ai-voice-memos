@@ -19,7 +19,7 @@ while [ -L "$_src" ]; do
     case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
 done
 PROJECT="$(cd -P "$(dirname "$_src")/.." 2>/dev/null && pwd || true)"
-[ -f "$PROJECT/engine/watcher.py" ] || PROJECT="$HOME/Desktop/Claude Projects/voice-memo-ai"
+[ -f "$PROJECT/engine/watcher.py" ] || PROJECT="$HOME/Projects/voice-memo-ai"
 unset _src _dir
 # Apple's system python, NOT homebrew's: the Full Disk Access grant that lets the
 # daemon read the Voice Memos folder is tied to the binary's code identity.

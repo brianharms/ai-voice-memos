@@ -17,7 +17,7 @@ let PROJECT: URL = {
             return URL(fileURLWithPath: p)
         }
     }
-    return HOME.appendingPathComponent("Desktop/Claude Projects/voice-memo-ai")
+    return HOME.appendingPathComponent("Projects/voice-memo-ai")
 }()
 let VMA = PROJECT.appendingPathComponent("daemon/vma")
 let STATUS_FILE = HOME.appendingPathComponent(".voice-memo-ai/status.json")

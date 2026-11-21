@@ -77,7 +77,7 @@ MODEL_HELP = ("whisper model missing: " + str(MODEL) + " — download ggml-mediu
 
 # Optional per-install settings (absent = the original behaviour). Keys:
 #   projects_dir  where your projects live (sandbox delete-protection; skills get
-#                 it as VMA_PROJECTS_DIR). Default ~/Desktop/Claude Projects.
+#                 it as VMA_PROJECTS_DIR). Default ~/Projects.
 #   name          who the memos belong to (skills get it as VMA_OWNER_NAME).
 #                 Default: this Mac's account full name (id -F).
 SETTINGS_FILE = STATE_DIR / "settings.json"
@@ -98,7 +98,7 @@ def _account_full_name() -> str:
 
 _SETTINGS = _load_settings()
 _pd = str(_SETTINGS.get("projects_dir") or "").strip()
-PROJECTS_DIR = Path(os.path.expanduser(_pd)) if _pd else HOME / "Desktop/Claude Projects"
+PROJECTS_DIR = Path(os.path.expanduser(_pd)) if _pd else HOME / "Projects"
 OWNER_NAME = str(_SETTINGS.get("name") or "").strip() or _account_full_name() or "the owner"
 OWNER_FIRST = OWNER_NAME.split()[0] if OWNER_NAME.split() else OWNER_NAME
 os.environ.setdefault("VMA_PROJECTS_DIR", str(PROJECTS_DIR))
